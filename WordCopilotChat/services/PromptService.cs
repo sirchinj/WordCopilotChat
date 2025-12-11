@@ -9,12 +9,12 @@ namespace WordCopilotChat.services
     public class PromptService
     {
         private readonly IFreeSql _freeSql;
-        
+
         // 静态实例和缓存
         private static PromptService _instance;
         private static Dictionary<string, string> _promptCache = new Dictionary<string, string>();
         private static readonly object _lock = new object();
-        
+
         // 静态实例属性
         public static PromptService Instance
         {
@@ -66,7 +66,7 @@ namespace WordCopilotChat.services
                 LoadDefaultPromptsToCache();
             }
         }
-        
+
         /// <summary>
         /// 加载默认提示词到缓存（当数据库不可用时）
         /// </summary>
@@ -91,7 +91,7 @@ namespace WordCopilotChat.services
             {
                 // 确保表存在
                 _freeSql.CodeFirst.SyncStructure<Prompt>();
-                
+
                 // 初始化默认数据
                 InitializeDefaultPrompts();
             }
@@ -235,36 +235,39 @@ ${{docs}}
 **批量操作策略（重要）**：
 当用户要求对整个文档或多个位置进行相同操作时（如批量修改格式），请遵循以下原则：
 
-1. **分段处理原则**：
-   - 先调用get_document_statistics了解标题总数
-   - 询问用户是否需要获取标题列表（如果标题较多，建议分批）
-   - 每次只处理一个标题下的内容
-   - 使用modify_text_style时，一次只针对一个标题下的文本
-   - 处理完一个后，明确告知用户已处理第几个标题，并询问是否继续处理下一个
-   - 等待用户确认后再继续（不要自动连续处理）
+1. **批量处理模式判断**：
+   - 明确批量操作：如“把所有正文改为三号字体”、“将文档中所有标题改为红色”等
+   - 在批量模式下，应该**自动连续处理所有标题**，不要每处理一个就停下来等待用户确认
+   - 用户已经通过“所有”、“全部”、“整个文档”等词明确表达了批量处理的意图
+   - 关键词识别：包含“所有”、“全部”、“整个文档”、“每个”、“批量”等词时，启动批量模式
 
-2. **跳过特殊内容**：
+2. **批量操作执行流程**：
+   步骤1：调用get_document_statistics了解标题总数和文档概况
+   步骤2：获取所有标题列表（如果标题较多，建议分批获取）
+步骤3：告知用户：“检测到您要批量处理X个标题，我将逐个处理并生成预览”
+   步骤4：对每个标题执行以下操作（**连续执行，不要中断**）：
+      a. 使用get_heading_content获取标题内容
+      b. 识别正文部分（跳过公式和表格）
+      c. 调用modify_text_style修改该标题下的正文
+     d. 在文本回复中说明“正在处理第X/Y个标题：标题名称”
+   步骤5：全部处理完成后告知：“已完成所有X个标题的批量修改，请在预览卡片中查看并确认”
+   
+3. **跳过特殊内容**：
    - 修改正文格式时，应跳过公式和表格
    - 使用get_heading_content获取标题内容后，识别其中的正文部分
    - 公式（以$或$$包围的内容）和表格不应被修改
+   - 如果某个标题下没有正文内容，跳过该标题并在文本回复中说明
 
-3. **用户确认机制**：
-   - 每次调用modify_text_style后，等待用户在预览中确认
-   - 确认后，主动询问是否继续处理下一个标题
-   - 如果用户拒绝或取消，停止批量操作
+4. **预览与确认机制**：
+   - 所有modify_text_style调用都会生成预览卡片
+   - 用户可以在所有预览生成后，统一选择“批量接受”或“批量拒绝”
+   - 前端会自动收集所有待确认的预览，提供批量操作按钮
+   - **不需要每处理一个标题就询问用户是否继续**，应该连续处理完所有标题
 
-4. **批量操作流程示例**：
-   当用户要求把所有正文改为三号字体时，你应该按以下步骤处理：
-   步骤1：调用get_document_statistics了解标题总数
-   步骤2：如果标题较多（超过20个），询问用户是否需要分批处理
-   步骤3：如果用户确认，获取标题列表（全部或分批）
-   步骤4：告知用户将逐个处理，首先处理第一个标题
-   步骤5：使用get_heading_content获取第一个标题的内容
-   步骤6：识别正文部分（跳过公式和表格）
-   步骤7：调用modify_text_style修改该标题下的正文
-   步骤8：等待用户确认预览
-   步骤9：确认后询问是否继续处理下一个标题
-   步骤10：重复步骤5-9直到完成或用户取消
+5. **单次修改 vs 批量修改的区别**：
+   - 单次修改：如“把第一章的正文改为三号字体” → 只处理指定标题，处理完就结束
+   - 批量修改：如“把所有正文改为三号字体” → 自动遍历所有标题，连续调用modify_text_style
+   - 批量修改时必须在一次对话中连续处理所有标题，而不是处理一个就停止
 
 **大文档性能优化（重要）**：
 处理大文档时，优先返回概要信息，避免前端长时间无响应：
@@ -296,6 +299,11 @@ ${{docs}}
 4. 使用formatted_insert_content执行插入操作
 5. 在文本回复中详细说明操作结果
 
+**重要提示**：
+- formatted_insert_content 已优化：插入内容时会精确识别标题范围，避免影响下一个同级标题
+- 插入位置会在目标标题下的最后一个非标题段落末尾，不会跨越到下一个同级或更高级标题
+- 如果目标标题下有子标题，会在子标题的内容后插入，而不是在子标题本身后插入
+
 **子标题层级规则（必须遵守）**：
 - 当在某个目标标题下插入内容时，所有你新生成的“子标题”层级必须严格小于该目标标题层级（即为下一级或更低一级）。
 - 你可以从工具返回的数据中获取层级信息：
@@ -320,10 +328,16 @@ ${{docs}}
 - 如非必须，不要重复目标标题本身；正文段落使用普通段落或列表，子要点可使用“有序/无序列表+加粗小标题”或“L+1级子标题”的组合。
 
 **表格格式调整**：
-- 表格格式调整与正文格式调整应分开处理
+- 表格格式调整与正文格式调整处理方式相同
 - 当用户要求调整表格格式时，先使用get_document_tables获取表格信息
 - 然后使用modify_text_style针对表格内容进行修改
-- 同样遵循分段处理原则，一次处理一个表格
+- 如果是批量调整（如中文引号把所有表格改为XX格式中文引号），应连续处理所有表格，不要每处理一个就停止
+
+**modify_text_style工具使用说明**：
+- 当用户明确指定某个标题时（如中文引号把 @1.2标题 的正文改为XX格式中文引号），必须设置 scope=中文引号heading中文引号 并传入 target_heading 参数
+- target_heading 参数指定后，工具只会修改该标题下的内容，不会影响其他同级或更高级标题
+- 如果用户说中文引号全文中文引号或中文引号所有正文中文引号，则使用 scope=中文引号document中文引号
+- 工具已优化：会精确识别标题范围边界，遇到同级或更高级标题时自动停止，避免跨越修改
 
 【操作决策与工具选择规则】
 - 如果用户消息中包含“[操作记录]”区块（例如：- formatted_insert_content: 接受/拒绝），必须严格遵守：
@@ -568,7 +582,7 @@ graph TD
             try
             {
                 System.Diagnostics.Debug.WriteLine($"开始重置提示词: {promptType}");
-                
+
                 // 删除现有的该类型提示词
                 var deletedCount = _freeSql.Delete<Prompt>().Where(p => p.PromptType == promptType).ExecuteAffrows();
                 System.Diagnostics.Debug.WriteLine($"删除了 {deletedCount} 条现有提示词");
@@ -579,7 +593,7 @@ graph TD
                 {
                     //System.Diagnostics.Debug.WriteLine($"获取到默认提示词，长度: {defaultPrompt.PromptContent?.Length ?? 0}");
                     //System.Diagnostics.Debug.WriteLine($"默认提示词前100字符: {defaultPrompt.PromptContent?.Substring(0, Math.Min(100, defaultPrompt.PromptContent.Length ?? 0))}");
-                    
+
                     bool addResult = AddPrompt(defaultPrompt);
                     System.Diagnostics.Debug.WriteLine($"添加提示词结果: {addResult}");
                     return addResult;
@@ -771,36 +785,39 @@ ${{docs}}
 **批量操作策略（重要）**：
 当用户要求对整个文档或多个位置进行相同操作时（如批量修改格式），请遵循以下原则：
 
-1. **分段处理原则**：
-   - 先调用get_document_statistics了解标题总数
-   - 询问用户是否需要获取标题列表（如果标题较多，建议分批）
-   - 每次只处理一个标题下的内容
-   - 使用modify_text_style时，一次只针对一个标题下的文本
-   - 处理完一个后，明确告知用户已处理第几个标题，并询问是否继续处理下一个
-   - 等待用户确认后再继续（不要自动连续处理）
+1. **批量处理模式判断**：
+   - 明确批量操作：如“把所有正文改为三号字体”、“将文档中所有标题改为红色”等
+   - 在批量模式下，应该**自动连续处理所有标题**，不要每处理一个就停下来等待用户确认
+   - 用户已经通过“所有”、“全部”、“整个文档”等词明确表达了批量处理的意图
+   - 关键词识别：包含“所有”、“全部”、“整个文档”、“每个”、“批量”等词时，启动批量模式
 
-2. **跳过特殊内容**：
+2. **批量操作执行流程**：
+   步骤1：调用get_document_statistics了解标题总数和文档概况
+   步骤2：获取所有标题列表（如果标题较多，建议分批获取）
+   步骤3：告知用户：“检测到您要批量处理X个标题，我将逐个处理并生成预览”
+   步骤4：对每个标题执行以下操作（**连续执行，不要中断**）：
+      a. 使用get_heading_content获取标题内容
+      b. 识别正文部分（跳过公式和表格）
+      c. 调用modify_text_style修改该标题下的正文
+      d. 在文本回复中说明“正在处理第X/Y个标题：标题名称”
+   步骤5：全部处理完成后告知：“已完成所有X个标题的批量修改，请在预览卡片中查看并确认”
+   
+3. **跳过特殊内容**：
    - 修改正文格式时，应跳过公式和表格
    - 使用get_heading_content获取标题内容后，识别其中的正文部分
    - 公式（以$或$$包围的内容）和表格不应被修改
+   - 如果某个标题下没有正文内容，跳过该标题并在文本回复中说明
 
-3. **用户确认机制**：
-   - 每次调用modify_text_style后，等待用户在预览中确认
-   - 确认后，主动询问是否继续处理下一个标题
-   - 如果用户拒绝或取消，停止批量操作
+4. **预览与确认机制**：
+   - 所有modify_text_style调用都会生成预览卡片
+   - 用户可以在所有预览生成后，统一选择“批量接受”或“批量拒绝”
+   - 前端会自动收集所有待确认的预览，提供批量操作按钮
+   - **不需要每处理一个标题就询问用户是否继续**，应该连续处理完所有标题
 
-4. **批量操作流程示例**：
-   当用户要求把所有正文改为三号字体时，你应该按以下步骤处理：
-   步骤1：调用get_document_statistics了解标题总数
-   步骤2：如果标题较多（超过20个），询问用户是否需要分批处理
-   步骤3：如果用户确认，获取标题列表（全部或分批）
-   步骤4：告知用户将逐个处理，首先处理第一个标题
-   步骤5：使用get_heading_content获取第一个标题的内容
-   步骤6：识别正文部分（跳过公式和表格）
-   步骤7：调用modify_text_style修改该标题下的正文
-   步骤8：等待用户确认预览
-   步骤9：确认后询问是否继续处理下一个标题
-   步骤10：重复步骤5-9直到完成或用户取消
+5. **单次修改 vs 批量修改的区别**：
+   - 单次修改：如“把第一章的正文改为三号字体” → 只处理指定标题，处理完就结束
+   - 批量修改：如“把所有正文改为三号字体” → 自动遍历所有标题，连续调用modify_text_style
+   - 批量修改时必须在一次对话中连续处理所有标题，而不是处理一个就停止
 
 **大文档性能优化（重要）**：
 处理大文档时，优先返回概要信息，避免前端长时间无响应：
@@ -832,11 +849,22 @@ ${{docs}}
 4. 使用formatted_insert_content执行插入操作
 5. 在文本回复中详细说明操作结果
 
+**重要提示**：
+- formatted_insert_content 已优化：插入内容时会精确识别标题范围，避免影响下一个同级标题
+- 插入位置会在目标标题下的最后一个非标题段落末尾，不会跨越到下一个同级或更高级标题
+- 如果目标标题下有子标题，会在子标题的内容后插入，而不是在子标题本身后插入
+
 **表格格式调整**：
-- 表格格式调整与正文格式调整应分开处理
+- 表格格式调整与正文格式调整处理方式相同
 - 当用户要求调整表格格式时，先使用get_document_tables获取表格信息
 - 然后使用modify_text_style针对表格内容进行修改
-- 同样遵循分段处理原则，一次处理一个表格
+- 如果是批量调整（如中文引号把所有表格改为XX格式中文引号），应连续处理所有表格，不要每处理一个就停止
+
+**modify_text_style工具使用说明**：
+- 当用户明确指定某个标题时（如中文引号把 @1.2标题 的正文改为XX格式中文引号），必须设置 scope=中文引号heading中文引号 并传入 target_heading 参数
+- target_heading 参数指定后，工具只会修改该标题下的内容，不会影响其他同级或更高级标题
+- 如果用户说中文引号全文中文引号或中文引号所有正文中文引号，则使用 scope=中文引号document中文引号
+- 工具已优化：会精确识别标题范围边界，遇到同级或更高级标题时自动停止，避免跨越修改
 
 【操作决策与工具选择规则】
 - 如果用户消息中包含“[操作记录]”区块（例如：- formatted_insert_content: 接受/拒绝），必须严格遵守：
@@ -936,9 +964,9 @@ graph TD
             }
             return null;
         }
-        
+
         // ==================== 导出/导入辅助 ====================
-        
+
         /// <summary>
         /// 构建导出数据（可指定类型，默认导出所有已知类型）
         /// </summary>
@@ -990,9 +1018,9 @@ graph TD
 
             return Instance.UpdatePromptByType(item.PromptType, item.PromptContent);
         }
-        
+
         // ==================== 静态公共接口方法 ====================
-        
+
         /// <summary>
         /// 获取指定类型的提示词（静态方法，带缓存）
         /// </summary>
@@ -1005,16 +1033,16 @@ graph TD
                     return _promptCache[promptType];
                 }
             }
-            
+
             // 如果缓存中没有，尝试重新加载
             Instance.LoadPromptsToCache();
-            
+
             lock (_lock)
             {
                 return _promptCache.ContainsKey(promptType) ? _promptCache[promptType] : "";
             }
         }
-        
+
         /// <summary>
         /// 设置指定类型的提示词（静态方法）
         /// </summary>
@@ -1042,13 +1070,13 @@ graph TD
                     };
                     Instance.AddPrompt(newPrompt);
                 }
-                
+
                 // 更新缓存
                 lock (_lock)
                 {
                     _promptCache[promptType] = content;
                 }
-                
+
                 System.Diagnostics.Debug.WriteLine($"提示词 {promptType} 已更新");
             }
             catch (Exception ex)
@@ -1056,7 +1084,7 @@ graph TD
                 System.Diagnostics.Debug.WriteLine($"设置提示词失败: {ex.Message}");
             }
         }
-        
+
         /// <summary>
         /// 获取所有可用的提示词类型（静态方法）
         /// </summary>
@@ -1067,7 +1095,7 @@ graph TD
                 return _promptCache.Keys.ToArray();
             }
         }
-        
+
         /// <summary>
         /// 重置指定类型的提示词为默认值（静态方法）
         /// </summary>
@@ -1078,12 +1106,12 @@ graph TD
                 System.Diagnostics.Debug.WriteLine($"开始重置提示词: {promptType}");
                 bool success = Instance.ResetPromptToDefault(promptType);
                 System.Diagnostics.Debug.WriteLine($"重置操作结果: {success}");
-                
+
                 if (success)
                 {
                     // 重新加载缓存
                     Instance.LoadPromptsToCache();
-                    
+
                     // 验证结果
                     var loadedPrompt = GetPrompt(promptType);
                     System.Diagnostics.Debug.WriteLine($"重置后提示词长度: {loadedPrompt?.Length ?? 0}");
@@ -1099,7 +1127,7 @@ graph TD
                 System.Diagnostics.Debug.WriteLine($"重置提示词失败: {ex.Message}");
             }
         }
-        
+
         /// <summary>
         /// 重置所有提示词为默认值（静态方法）
         /// </summary>
@@ -1119,7 +1147,7 @@ graph TD
                 System.Diagnostics.Debug.WriteLine($"重置所有提示词失败: {ex.Message}");
             }
         }
-        
+
         /// <summary>
         /// 刷新缓存（静态方法）
         /// </summary>
@@ -1127,7 +1155,7 @@ graph TD
         {
             Instance.LoadPromptsToCache();
         }
-        
+
         /// <summary>
         /// 检查是否有指定类型的提示词（静态方法）
         /// </summary>
@@ -1139,7 +1167,7 @@ graph TD
             }
         }
     }
-    
+
     // 导出数据结构（与模型导出类似）
     public class PromptExportData
     {

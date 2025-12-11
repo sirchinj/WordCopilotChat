@@ -24,6 +24,7 @@ using Model = WordCopilotChat.models.Model;
 using WordCopilot.utils;
 
 
+
 namespace WordCopilotChat
 {
     public partial class UserControl1 : UserControl
@@ -212,6 +213,7 @@ namespace WordCopilotChat
                 JArray enabledToolsArray = jsonObject["enabledTools"] as JArray; // 新增：获取启用的工具列表
                 int selectedModelId = jsonObject["selectedModelId"]?.ToObject<int>() ?? 0; // 新增：获取选中的模型ID
                 JArray contextsArray = jsonObject["contexts"] as JArray; // 新增：获取上下文列表
+                JArray imagesArray = jsonObject["images"] as JArray; // 新增：获取图片列表
 
                 // 根据消息类型处理
                 if (!string.IsNullOrEmpty(messageType))
@@ -244,7 +246,14 @@ namespace WordCopilotChat
                                 contexts = contextsArray.ToObject<List<JObject>>();
                             }
 
-                            HandleUserMessage(messageContent, chatMode, enabledTools, selectedModelId, contexts);
+                            // 处理图片数据
+                            List<JObject> images = null;
+                            if (imagesArray != null)
+                            {
+                                images = imagesArray.ToObject<List<JObject>>();
+                            }
+
+                            HandleUserMessage(messageContent, chatMode, enabledTools, selectedModelId, contexts, images);
                             break;
 
                         case "clearHistory":
@@ -548,11 +557,23 @@ namespace WordCopilotChat
         }
 
         // 处理来自用户的消息
-        private async void HandleUserMessage(string message, string chatMode, string[] enabledTools = null, int selectedModelId = 0, List<JObject> contexts = null)
+        private async void HandleUserMessage(string message, string chatMode, string[] enabledTools = null, int selectedModelId = 0, List<JObject> contexts = null, List<JObject> images = null)
         {
             try
             {
                 Debug.WriteLine($"处理用户消息: {message}, 模式: {chatMode}");
+
+                // 如果有图片，输出图片信息
+                if (images != null && images.Count > 0)
+                {
+                    Debug.WriteLine($"收到 {images.Count} 张图片");
+                    foreach (var img in images)
+                    {
+                        string imgName = img["name"]?.ToString() ?? "未命名";
+                        int imgSize = img["size"]?.ToObject<int>() ?? 0;
+                        Debug.WriteLine($"  - {imgName}: {imgSize / 1024.0:F2} KB");
+                    }
+                }
 
                 // 重置WordTools的取消标志（开始新的对话）
                 WordTools.ResetCancelFlag();
@@ -597,12 +618,13 @@ namespace WordCopilotChat
                     Debug.WriteLine("智能问答模式：已清空所有工具");
                 }
 
-                // 添加用户消息到历史记录
-                AddUserMessageToHistory(message);
+                // 添加用户消息到历史记录（支持多模态）
+                AddUserMessageToHistory(message, images);
 
                 // 从数据库获取选中的模型配置
                 var modelConfig = GetSelectedModel(selectedModelId);
                 string modelName, apiUrl, apiKey;
+                bool supportsMultimodal = false;
 
                 if (modelConfig == null)
                 {
@@ -635,9 +657,38 @@ namespace WordCopilotChat
                     modelName = ExtractModelNameFromParameters(modelConfig.Parameters);
                     apiUrl = modelConfig.BaseUrl;
                     apiKey = modelConfig.ApiKey;
+                    supportsMultimodal = modelConfig.EnableMulti == 1; // 检查是否启用多模态
 
                     // 保存当前模型配置，用于后续的用户操作反馈对话
                     _currentModelConfig = modelConfig;
+
+                    Debug.WriteLine($"模型多模态支持: {(supportsMultimodal ? "是" : "否")}");
+
+                    // 如果有图片但模型不支持多模态，给出警告
+                    if (images != null && images.Count > 0 && !supportsMultimodal)
+                    {
+                        Debug.WriteLine("警告: 当前模型不支持多模态，图片将被忽略");
+                        if (InvokeRequired)
+                        {
+                            BeginInvoke(new Action(async () => {
+                                try
+                                {
+                                    await webView21.ExecuteScriptAsync("showError('当前模型不支持多模态，无法处理图片。请在模型列表中启用多模态支持。')");
+                                    await webView21.ExecuteScriptAsync("finishGeneratingOutline()");
+                                }
+                                catch (Exception ex)
+                                {
+                                    Debug.WriteLine($"显示错误消息时出错: {ex.Message}");
+                                }
+                            }));
+                        }
+                        else
+                        {
+                            await webView21.ExecuteScriptAsync("showError('当前模型不支持多模态，无法处理图片。请在模型列表中启用多模态支持。')");
+                            await webView21.ExecuteScriptAsync("finishGeneratingOutline()");
+                        }
+                        return;
+                    }
                 }
 
                 Debug.WriteLine($"使用模型: {modelName}, API地址: {apiUrl}");
@@ -671,9 +722,14 @@ namespace WordCopilotChat
                     ["messages"] = messages,
                     ["stream"] = true,
                     ["temperature"] = temperature,
-                    ["max_tokens"] = maxTokens,
                     ["top_p"] = topP
                 };
+
+                // max_tokens为可选参数，仅在有值时添加
+                if (maxTokens.HasValue)
+                {
+                    baseObj["max_tokens"] = maxTokens.Value;
+                }
 
                 // 在发送请求前输出本次对话的完整 messages 内容和请求参数
                 try
@@ -687,7 +743,7 @@ namespace WordCopilotChat
                     Debug.WriteLine("=== 本次请求参数 ===");
                     Debug.WriteLine($"模型: {modelName}");
                     Debug.WriteLine($"温度: {temperature}");
-                    Debug.WriteLine($"最大令牌: {maxTokens}");
+                    Debug.WriteLine($"最大令牌: {(maxTokens.HasValue ? maxTokens.Value.ToString() : "未设置(由服务商自动处理)")}");
                     Debug.WriteLine($"Top-P: {topP}");
                     Debug.WriteLine($"聊天模式: {chatMode}");
                     Debug.WriteLine("=== 参数输出结束 ===");
@@ -1031,14 +1087,62 @@ namespace WordCopilotChat
             }
         }
 
-        // 添加用户消息到历史记录
-        private void AddUserMessageToHistory(string message)
+        // 添加用户消息到历史记录（支持多模态）
+        private void AddUserMessageToHistory(string message, List<JObject> images = null)
         {
-            var userMessage = new JObject
+            JObject userMessage;
+
+            // 如果有图片，构建多模态消息格式
+            if (images != null && images.Count > 0)
             {
-                ["role"] = "user",
-                ["content"] = message
-            };
+                var contentArray = new JArray();
+
+                // 添加文本内容
+                contentArray.Add(new JObject
+                {
+                    ["type"] = "text",
+                    ["text"] = message
+                });
+
+                // 添加图片内容
+                foreach (var img in images)
+                {
+                    string base64Data = img["base64"]?.ToString() ?? "";
+                    string imageType = img["type"]?.ToString() ?? "image/png";
+
+                    // 确保base64数据格式正确
+                    if (!base64Data.StartsWith("data:"))
+                    {
+                        base64Data = $"data:{imageType};base64,{base64Data}";
+                    }
+
+                    contentArray.Add(new JObject
+                    {
+                        ["type"] = "image_url",
+                        ["image_url"] = new JObject
+                        {
+                            ["url"] = base64Data
+                        }
+                    });
+                }
+
+                userMessage = new JObject
+                {
+                    ["role"] = "user",
+                    ["content"] = contentArray
+                };
+
+                Debug.WriteLine($"添加多模态用户消息到历史，包含 {images.Count} 张图片");
+            }
+            else
+            {
+                // 纯文本消息
+                userMessage = new JObject
+                {
+                    ["role"] = "user",
+                    ["content"] = message
+                };
+            }
 
             _conversationHistory.Add(userMessage);
 
@@ -1199,7 +1303,7 @@ namespace WordCopilotChat
         }
 
         // 获取AI参数：优先从模型配置中解析，其次从应用设置中获取
-        private (double temperature, int maxTokens, double topP) GetAIParameters(Model modelConfig, string chatMode)
+        private (double temperature, int? maxTokens, double topP) GetAIParameters(Model modelConfig, string chatMode)
         {
             try
             {
@@ -1213,10 +1317,10 @@ namespace WordCopilotChat
                     var topP = parameters["top_p"]?.ToObject<double>();
 
                     // 如果模型配置中有完整的参数，使用它们
-                    if (temperature.HasValue && maxTokens.HasValue && topP.HasValue)
+                    if (temperature.HasValue && topP.HasValue)
                     {
-                        Debug.WriteLine($"使用模型配置参数: temperature={temperature.Value}, max_tokens={maxTokens.Value}, top_p={topP.Value}");
-                        return (temperature.Value, maxTokens.Value, topP.Value);
+                        Debug.WriteLine($"使用模型配置参数: temperature={temperature.Value}, max_tokens={maxTokens?.ToString() ?? "null(自动)"}, top_p={topP.Value}");
+                        return (temperature.Value, maxTokens, topP.Value);
                     }
 
                     // 如果只有部分参数，使用已有的参数并用应用设置补充缺失的
@@ -1226,13 +1330,13 @@ namespace WordCopilotChat
                     var finalMaxTokens = maxTokens ?? defaultMaxTokens;
                     var finalTopP = topP ?? defaultTopP;
 
-                    Debug.WriteLine($"使用混合参数(模型+应用设置): temperature={finalTemp}, max_tokens={finalMaxTokens}, top_p={finalTopP}");
+                    Debug.WriteLine($"使用混合参数(模型+应用设置): temperature={finalTemp}, max_tokens={finalMaxTokens?.ToString() ?? "null(自动)"}, top_p={finalTopP}");
                     return (finalTemp, finalMaxTokens, finalTopP);
                 }
 
                 // 如果模型配置中没有参数，使用应用设置中的默认值
                 var appSettings = _appSettingsService.GetAIParametersByMode(chatMode);
-                Debug.WriteLine($"使用应用设置参数: temperature={appSettings.temperature}, max_tokens={appSettings.maxTokens}, top_p={appSettings.topP}");
+                Debug.WriteLine($"使用应用设置参数: temperature={appSettings.temperature}, max_tokens={appSettings.maxTokens?.ToString() ?? "null(自动)"}, top_p={appSettings.topP}");
                 return appSettings;
             }
             catch (Exception ex)
@@ -2709,9 +2813,14 @@ namespace WordCopilotChat
                     ["messages"] = messages,
                     ["stream"] = true,
                     ["temperature"] = temperature,
-                    ["max_tokens"] = maxTokens,
                     ["top_p"] = topP
                 };
+
+                // max_tokens为可选参数，仅在有值时添加
+                if (maxTokens.HasValue)
+                {
+                    requestBody["max_tokens"] = maxTokens.Value;
+                }
 
                 string json = requestBody.ToString();
 
@@ -2930,9 +3039,14 @@ namespace WordCopilotChat
                     ["messages"] = messages,
                     ["stream"] = true,
                     ["temperature"] = temperature,
-                    ["max_tokens"] = maxTokens,
                     ["top_p"] = topP
                 };
+
+                // max_tokens为可选参数，仅在有值时添加
+                if (maxTokens.HasValue)
+                {
+                    requestBody["max_tokens"] = maxTokens.Value;
+                }
 
                 string json = requestBody.ToString();
 

@@ -132,7 +132,6 @@ namespace WordCopilotChat
             // chkMultiModal
             // 
             this.chkMultiModal.AutoSize = true;
-            this.chkMultiModal.Enabled = false;
             this.chkMultiModal.Location = new System.Drawing.Point(110, 215);
             this.chkMultiModal.Name = "chkMultiModal";
             this.chkMultiModal.Size = new System.Drawing.Size(60, 16);

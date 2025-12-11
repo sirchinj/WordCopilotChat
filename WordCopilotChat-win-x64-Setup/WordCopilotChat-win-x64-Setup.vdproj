@@ -117,12 +117,6 @@
         }
         "Entry"
         {
-        "MsmKey" = "8:_19A7310DF86F4325A0C6591614D45244"
-        "OwnerKey" = "8:_UNDEFINED"
-        "MsmSig" = "8:_UNDEFINED"
-        }
-        "Entry"
-        {
         "MsmKey" = "8:_1C82F934417AC689104A418FE3C68544"
         "OwnerKey" = "8:_5F46DCD6F281464F872985BDD3ADEBAB"
         "MsmSig" = "8:_UNDEFINED"
@@ -207,12 +201,6 @@
         }
         "Entry"
         {
-        "MsmKey" = "8:_2D52997D59C44B99800B842AE87A9CB1"
-        "OwnerKey" = "8:_UNDEFINED"
-        "MsmSig" = "8:_UNDEFINED"
-        }
-        "Entry"
-        {
         "MsmKey" = "8:_30F8F43853284160701081B8C26A7D99"
         "OwnerKey" = "8:_5F46DCD6F281464F872985BDD3ADEBAB"
         "MsmSig" = "8:_UNDEFINED"
@@ -239,6 +227,12 @@
         {
         "MsmKey" = "8:_3B3C30D5368ACF70B3D5027C2B3F3466"
         "OwnerKey" = "8:_5F46DCD6F281464F872985BDD3ADEBAB"
+        "MsmSig" = "8:_UNDEFINED"
+        }
+        "Entry"
+        {
+        "MsmKey" = "8:_3E61208A1A5248C7A404822E3C7404C4"
+        "OwnerKey" = "8:_UNDEFINED"
         "MsmSig" = "8:_UNDEFINED"
         }
         "Entry"
@@ -389,12 +383,6 @@
         {
         "MsmKey" = "8:_624AB39F93D2B97BC8D85E9BBDF65B1E"
         "OwnerKey" = "8:_5F46DCD6F281464F872985BDD3ADEBAB"
-        "MsmSig" = "8:_UNDEFINED"
-        }
-        "Entry"
-        {
-        "MsmKey" = "8:_62D91DD9FECB4E96A6DB3495E8DC4D09"
-        "OwnerKey" = "8:_UNDEFINED"
         "MsmSig" = "8:_UNDEFINED"
         }
         "Entry"
@@ -573,12 +561,6 @@
         }
         "Entry"
         {
-        "MsmKey" = "8:_8D30E195829D40F6B180CFDD6CBDCB52"
-        "OwnerKey" = "8:_UNDEFINED"
-        "MsmSig" = "8:_UNDEFINED"
-        }
-        "Entry"
-        {
         "MsmKey" = "8:_8DCD3C125E34752037A15C8668A595AC"
         "OwnerKey" = "8:_5F46DCD6F281464F872985BDD3ADEBAB"
         "MsmSig" = "8:_UNDEFINED"
@@ -735,12 +717,6 @@
         }
         "Entry"
         {
-        "MsmKey" = "8:_AF596DA66B2744C7AF88403364569DEB"
-        "OwnerKey" = "8:_UNDEFINED"
-        "MsmSig" = "8:_UNDEFINED"
-        }
-        "Entry"
-        {
         "MsmKey" = "8:_B01FD9785CC4C918B4DE3434BECCD895"
         "OwnerKey" = "8:_5F46DCD6F281464F872985BDD3ADEBAB"
         "MsmSig" = "8:_UNDEFINED"
@@ -755,6 +731,12 @@
         {
         "MsmKey" = "8:_B14B48D19F4424D29B57F9DB8EE0DDB0"
         "OwnerKey" = "8:_5F46DCD6F281464F872985BDD3ADEBAB"
+        "MsmSig" = "8:_UNDEFINED"
+        }
+        "Entry"
+        {
+        "MsmKey" = "8:_B243F5878E354B2FAAB29FCEA4D0067B"
+        "OwnerKey" = "8:_UNDEFINED"
         "MsmSig" = "8:_UNDEFINED"
         }
         "Entry"
@@ -939,12 +921,6 @@
         }
         "Entry"
         {
-        "MsmKey" = "8:_DD5E4E9B86CD4E76B1579B5F368FDF08"
-        "OwnerKey" = "8:_UNDEFINED"
-        "MsmSig" = "8:_UNDEFINED"
-        }
-        "Entry"
-        {
         "MsmKey" = "8:_DF1A750F5C64BFD3B0663216CD45BCBB"
         "OwnerKey" = "8:_E9ABFD765B7B68B5B374572D6A27DF5D"
         "MsmSig" = "8:_UNDEFINED"
@@ -965,6 +941,12 @@
         {
         "MsmKey" = "8:_E66774775015606949AD3AF7DE5D8BA9"
         "OwnerKey" = "8:_5F46DCD6F281464F872985BDD3ADEBAB"
+        "MsmSig" = "8:_UNDEFINED"
+        }
+        "Entry"
+        {
+        "MsmKey" = "8:_E6F096F39B5143D5874D65FD95E1BD39"
+        "OwnerKey" = "8:_UNDEFINED"
         "MsmSig" = "8:_UNDEFINED"
         }
         "Entry"
@@ -2370,26 +2352,6 @@
             "IsDependency" = "11:TRUE"
             "IsolateTo" = "8:"
             }
-            "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_19A7310DF86F4325A0C6591614D45244"
-            {
-            "SourcePath" = "8:..\\WordCopilotChat\\wwwroot\\js\\simple-test.js"
-            "TargetName" = "8:simple-test.js"
-            "Tag" = "8:"
-            "Folder" = "8:_78F53BC274F64D67B86D96C3A51489A5"
-            "Condition" = "8:"
-            "Transitive" = "11:FALSE"
-            "Vital" = "11:TRUE"
-            "ReadOnly" = "11:FALSE"
-            "Hidden" = "11:FALSE"
-            "System" = "11:FALSE"
-            "Permanent" = "11:FALSE"
-            "SharedLegacy" = "11:FALSE"
-            "PackageAs" = "3:1"
-            "Register" = "3:1"
-            "Exclude" = "11:FALSE"
-            "IsDependency" = "11:FALSE"
-            "IsolateTo" = "8:"
-            }
             "{9F6F8455-1EF1-4B85-886A-4223BCC8E7F7}:_1C82F934417AC689104A418FE3C68544"
             {
             "AssemblyRegister" = "3:1"
@@ -2782,26 +2744,6 @@
             "IsDependency" = "11:TRUE"
             "IsolateTo" = "8:"
             }
-            "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_2D52997D59C44B99800B842AE87A9CB1"
-            {
-            "SourcePath" = "8:C:\\Users\\admin\\Desktop\\1\\wc.sqlite"
-            "TargetName" = "8:wc.sqlite"
-            "Tag" = "8:"
-            "Folder" = "8:_517081F5C4F64D28AEF2A83326775224"
-            "Condition" = "8:"
-            "Transitive" = "11:FALSE"
-            "Vital" = "11:TRUE"
-            "ReadOnly" = "11:FALSE"
-            "Hidden" = "11:FALSE"
-            "System" = "11:FALSE"
-            "Permanent" = "11:FALSE"
-            "SharedLegacy" = "11:FALSE"
-            "PackageAs" = "3:1"
-            "Register" = "3:1"
-            "Exclude" = "11:FALSE"
-            "IsDependency" = "11:FALSE"
-            "IsolateTo" = "8:"
-            }
             "{9F6F8455-1EF1-4B85-886A-4223BCC8E7F7}:_30F8F43853284160701081B8C26A7D99"
             {
             "AssemblyRegister" = "3:1"
@@ -2922,6 +2864,26 @@
             "Register" = "3:1"
             "Exclude" = "11:FALSE"
             "IsDependency" = "11:TRUE"
+            "IsolateTo" = "8:"
+            }
+            "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_3E61208A1A5248C7A404822E3C7404C4"
+            {
+            "SourcePath" = "8:..\\WordCopilotChat\\wwwroot\\js\\chat.js"
+            "TargetName" = "8:chat.js"
+            "Tag" = "8:"
+            "Folder" = "8:_78F53BC274F64D67B86D96C3A51489A5"
+            "Condition" = "8:"
+            "Transitive" = "11:FALSE"
+            "Vital" = "11:TRUE"
+            "ReadOnly" = "11:FALSE"
+            "Hidden" = "11:FALSE"
+            "System" = "11:FALSE"
+            "Permanent" = "11:FALSE"
+            "SharedLegacy" = "11:FALSE"
+            "PackageAs" = "3:1"
+            "Register" = "3:1"
+            "Exclude" = "11:FALSE"
+            "IsDependency" = "11:FALSE"
             "IsolateTo" = "8:"
             }
             "{9F6F8455-1EF1-4B85-886A-4223BCC8E7F7}:_454642AC4F2EF356B221088B7667221D"
@@ -3571,26 +3533,6 @@
             "Register" = "3:1"
             "Exclude" = "11:FALSE"
             "IsDependency" = "11:TRUE"
-            "IsolateTo" = "8:"
-            }
-            "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_62D91DD9FECB4E96A6DB3495E8DC4D09"
-            {
-            "SourcePath" = "8:..\\..\\..\\OfficeWordCopilot\\OfficeWordCopilot\\wwwroot\\index.html"
-            "TargetName" = "8:index.html"
-            "Tag" = "8:"
-            "Folder" = "8:_39459156FDBD47438FA55D71F3CE8481"
-            "Condition" = "8:"
-            "Transitive" = "11:FALSE"
-            "Vital" = "11:TRUE"
-            "ReadOnly" = "11:FALSE"
-            "Hidden" = "11:FALSE"
-            "System" = "11:FALSE"
-            "Permanent" = "11:FALSE"
-            "SharedLegacy" = "11:FALSE"
-            "PackageAs" = "3:1"
-            "Register" = "3:1"
-            "Exclude" = "11:FALSE"
-            "IsDependency" = "11:FALSE"
             "IsolateTo" = "8:"
             }
             "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_62EF0830390A41E3A7C26EC97770633A"
@@ -4373,26 +4315,6 @@
             "IsDependency" = "11:FALSE"
             "IsolateTo" = "8:"
             }
-            "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_8D30E195829D40F6B180CFDD6CBDCB52"
-            {
-            "SourcePath" = "8:..\\..\\..\\OfficeWordCopilot\\OfficeWordCopilot\\wwwroot\\css\\styles.css"
-            "TargetName" = "8:styles.css"
-            "Tag" = "8:"
-            "Folder" = "8:_4A13FDAB073849E6882D07E50A8767A4"
-            "Condition" = "8:"
-            "Transitive" = "11:FALSE"
-            "Vital" = "11:TRUE"
-            "ReadOnly" = "11:FALSE"
-            "Hidden" = "11:FALSE"
-            "System" = "11:FALSE"
-            "Permanent" = "11:FALSE"
-            "SharedLegacy" = "11:FALSE"
-            "PackageAs" = "3:1"
-            "Register" = "3:1"
-            "Exclude" = "11:FALSE"
-            "IsDependency" = "11:FALSE"
-            "IsolateTo" = "8:"
-            }
             "{9F6F8455-1EF1-4B85-886A-4223BCC8E7F7}:_8DCD3C125E34752037A15C8668A595AC"
             {
             "AssemblyRegister" = "3:1"
@@ -5051,26 +4973,6 @@
             "IsDependency" = "11:FALSE"
             "IsolateTo" = "8:"
             }
-            "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_AF596DA66B2744C7AF88403364569DEB"
-            {
-            "SourcePath" = "8:..\\WordCopilotChat\\wwwroot\\js\\test-modern-preview.js"
-            "TargetName" = "8:test-modern-preview.js"
-            "Tag" = "8:"
-            "Folder" = "8:_78F53BC274F64D67B86D96C3A51489A5"
-            "Condition" = "8:"
-            "Transitive" = "11:FALSE"
-            "Vital" = "11:TRUE"
-            "ReadOnly" = "11:FALSE"
-            "Hidden" = "11:FALSE"
-            "System" = "11:FALSE"
-            "Permanent" = "11:FALSE"
-            "SharedLegacy" = "11:FALSE"
-            "PackageAs" = "3:1"
-            "Register" = "3:1"
-            "Exclude" = "11:FALSE"
-            "IsDependency" = "11:FALSE"
-            "IsolateTo" = "8:"
-            }
             "{9F6F8455-1EF1-4B85-886A-4223BCC8E7F7}:_B01FD9785CC4C918B4DE3434BECCD895"
             {
             "AssemblyRegister" = "3:1"
@@ -5162,6 +5064,26 @@
             "Register" = "3:1"
             "Exclude" = "11:FALSE"
             "IsDependency" = "11:TRUE"
+            "IsolateTo" = "8:"
+            }
+            "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_B243F5878E354B2FAAB29FCEA4D0067B"
+            {
+            "SourcePath" = "8:..\\WordCopilotChat\\wwwroot\\css\\styles.css"
+            "TargetName" = "8:styles.css"
+            "Tag" = "8:"
+            "Folder" = "8:_4A13FDAB073849E6882D07E50A8767A4"
+            "Condition" = "8:"
+            "Transitive" = "11:FALSE"
+            "Vital" = "11:TRUE"
+            "ReadOnly" = "11:FALSE"
+            "Hidden" = "11:FALSE"
+            "System" = "11:FALSE"
+            "Permanent" = "11:FALSE"
+            "SharedLegacy" = "11:FALSE"
+            "PackageAs" = "3:1"
+            "Register" = "3:1"
+            "Exclude" = "11:FALSE"
+            "IsDependency" = "11:FALSE"
             "IsolateTo" = "8:"
             }
             "{9F6F8455-1EF1-4B85-886A-4223BCC8E7F7}:_B62FB2D615E756287450B45CDE719575"
@@ -5935,26 +5857,6 @@
             "IsDependency" = "11:TRUE"
             "IsolateTo" = "8:"
             }
-            "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_DD5E4E9B86CD4E76B1579B5F368FDF08"
-            {
-            "SourcePath" = "8:..\\..\\..\\OfficeWordCopilot\\OfficeWordCopilot\\wwwroot\\js\\chat.js"
-            "TargetName" = "8:chat.js"
-            "Tag" = "8:"
-            "Folder" = "8:_78F53BC274F64D67B86D96C3A51489A5"
-            "Condition" = "8:"
-            "Transitive" = "11:FALSE"
-            "Vital" = "11:TRUE"
-            "ReadOnly" = "11:FALSE"
-            "Hidden" = "11:FALSE"
-            "System" = "11:FALSE"
-            "Permanent" = "11:FALSE"
-            "SharedLegacy" = "11:FALSE"
-            "PackageAs" = "3:1"
-            "Register" = "3:1"
-            "Exclude" = "11:FALSE"
-            "IsDependency" = "11:FALSE"
-            "IsolateTo" = "8:"
-            }
             "{9F6F8455-1EF1-4B85-886A-4223BCC8E7F7}:_DF1A750F5C64BFD3B0663216CD45BCBB"
             {
             "AssemblyRegister" = "3:1"
@@ -6077,6 +5979,26 @@
             "Register" = "3:1"
             "Exclude" = "11:FALSE"
             "IsDependency" = "11:TRUE"
+            "IsolateTo" = "8:"
+            }
+            "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_E6F096F39B5143D5874D65FD95E1BD39"
+            {
+            "SourcePath" = "8:..\\WordCopilotChat\\wwwroot\\index.html"
+            "TargetName" = "8:index.html"
+            "Tag" = "8:"
+            "Folder" = "8:_39459156FDBD47438FA55D71F3CE8481"
+            "Condition" = "8:"
+            "Transitive" = "11:FALSE"
+            "Vital" = "11:TRUE"
+            "ReadOnly" = "11:FALSE"
+            "Hidden" = "11:FALSE"
+            "System" = "11:FALSE"
+            "Permanent" = "11:FALSE"
+            "SharedLegacy" = "11:FALSE"
+            "PackageAs" = "3:1"
+            "Register" = "3:1"
+            "Exclude" = "11:FALSE"
+            "IsDependency" = "11:FALSE"
             "IsolateTo" = "8:"
             }
             "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_E7170AF4F1C049108A04C6C648CE5AD7"
@@ -6890,15 +6812,15 @@
         {
         "Name" = "8:Microsoft Visual Studio"
         "ProductName" = "8:WordCopilotChat-win-x64"
-        "ProductCode" = "8:{2EA0F754-FEB5-4D21-93EC-9205FA8A60A5}"
-        "PackageCode" = "8:{5963FDC9-497A-432F-BB69-613227C2EBEF}"
+        "ProductCode" = "8:{4A4A4F1E-D151-42F1-AFB3-AF0A2D77FAE0}"
+        "PackageCode" = "8:{1E04B1C8-3F75-42C2-829C-DCC9B26C47A5}"
         "UpgradeCode" = "8:{13A4DBFD-1018-42C8-85CF-872932CF3088}"
         "AspNetVersion" = "8:2.0.50727.0"
         "RestartWWWService" = "11:FALSE"
         "RemovePreviousVersions" = "11:FALSE"
         "DetectNewerInstalledVersion" = "11:TRUE"
         "InstallAllUsers" = "11:FALSE"
-        "ProductVersion" = "8:0.0.2"
+        "ProductVersion" = "8:0.0.3"
         "Manufacturer" = "8:CoderZzxy"
         "ARPHELPTELEPHONE" = "8:"
         "ARPHELPLINK" = "8:https://github.com/CoderZzxy/WordCopilotChat"

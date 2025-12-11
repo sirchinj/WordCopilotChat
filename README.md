@@ -30,7 +30,7 @@
 - 安全与导入导出
   - 导入导出使用 AES-256-CBC + HMAC-SHA256 加密，PBKDF2 派生密钥（见 `utils/EncryptionUtils.cs`）
 - 模型适配
-  - 已适配国产模型：DeepSeek、Kimi、ChatGLM、MiniMax 的最新旗舰模型；支持自定义 BaseUrl / ApiKey / 参数
+  - 已适配国产模型：DeepSeek、Kimi、ChatGLM、MiniMax 的最新旗舰模型；支持自定义 BaseUrl / ApiKey / 参数 /多模态
 
 ### ⚙️ 模型配置注意事项
 
@@ -39,6 +39,7 @@
 - **DeepSeek**、**Kimi**、**ChatGLM**、**MiniMax** 的最新旗舰模型（2025-11-15）
 - 支持自定义 API 地址、ApiKey、请求参数
 - 也可使用其他兼容 OpenAI API 格式的自定义模型接口
+- 已适配**ChatGLM**系列的vl模型：**ChatGLM-4.6V**、**Kimi**系列的vl模型：**moonshot-v1-8k-vision-preview**等（2025-12-11）
 
 #### ⚠️ API 地址配置重要说明
 

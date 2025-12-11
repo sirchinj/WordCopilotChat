@@ -265,9 +265,9 @@ namespace WordCopilot.utils
                 {
                     Debug.WriteLine("检测到大pageSize，使用快速一次性获取所有标题...");
                     var startTime = System.Diagnostics.Stopwatch.StartNew();
-                    
+
                     var allHeadings = GetHeadingsUsingOutlineLevel(doc, cancellationToken);
-                    
+
                     startTime.Stop();
                     Debug.WriteLine($"快速获取完成 - 总标题数: {allHeadings.Count}, 耗时: {startTime.ElapsedMilliseconds}ms");
 
@@ -860,10 +860,17 @@ namespace WordCopilot.utils
         {
             OpenAIUtils.RegisterTool(
                 "modify_text_style",
-                "修改指定文本的样式，包括背景色、字体大小、粗细、段落间距等格式",
+                "修改指定文本的样式，包括字体名称、背景色、字体大小、粗细、段落间距等格式",
                 new Dictionary<string, object>
                 {
-                    { "text_to_find", new { type = "string", description = "要查找和修改的文本内容" } },
+                    // 查找-匹配模式
+                    { "text_to_find", new { type = "string", description = "要查找和修改的文本内容（查找-匹配模式）" } },
+                    { "max_matches", new { type = "integer", description = "查找-匹配模式下的最大匹配次数上限（1-1000）", minimum = 1, maximum = 1000, @default = 50 } },
+                    // 范围模式（批量）
+                    { "scope", new { type = "string", description = "作用范围：document(全文正文)、heading(指定标题下正文)、selection(当前选区)、text(仅查找匹配)", @enum = new[] { "document", "heading", "selection", "text" }, @default = "text" } },
+                    { "target_heading", new { type = "string", description = "当 scope=heading 时的目标标题文本（支持关键词）", @default = "" } },
+                    { "apply_all", new { type = "boolean", description = "是否强制对目标范围内所有正文批量应用样式（忽略 text_to_find）", @default = false } },
+                    { "font_name", new { type = "string", description = "字体名称：宋体、仿宋、黑体、楷体、微软雅黑、Arial、Times New Roman、Calibri 等" } },
                     { "font_size", new { type = "integer", description = "字体大小(8-72)，单位为磅", minimum = 8, maximum = 72 } },
                     { "font_bold", new { type = "boolean", description = "是否加粗" } },
                     { "font_italic", new { type = "boolean", description = "是否斜体" } },
@@ -897,7 +904,8 @@ namespace WordCopilot.utils
                 bool addSpacing = GetParameterValue<bool>(parameters, "add_spacing", false); // 默认不添加额外间距
                 string insertPositionRaw = GetParameterValue<string>(parameters, "insert_position", _defaultInsertPosition);
                 string insertPosition = NormalizeInsertPosition(!string.IsNullOrEmpty(insertPositionRaw) ? insertPositionRaw : _defaultInsertPosition);
-                NotifyProgress($"formatted_insert_content: 插入位置参数 raw='{insertPositionRaw}', 默认='{_defaultInsertPosition}', 使用='{insertPosition}'");
+                bool trimSpaces = GetParameterValue<bool>(parameters, "trim_spaces", true); // 默认清除多余空格
+                NotifyProgress($"formatted_insert_content: 插入位置参数 raw='{insertPositionRaw}', 默认='{_defaultInsertPosition}', 使用='{insertPosition}', 清除空格={trimSpaces}");
                 bool previewOnly = GetParameterValue<bool>(parameters, "preview_only", true); // 默认只预览
 
                 // 内容不能为空，但标题可以为空（表示在当前光标位置插入）
@@ -932,20 +940,43 @@ namespace WordCopilot.utils
                         indent_level = indentLevel,
                         add_spacing = addSpacing,
                         insert_position = insertPosition,
+                        trim_spaces = trimSpaces,
                         original_content = content,
                         preview_content = previewContent,
+                        parameters = parameters,
                         message = previewMessage
                     });
                 }
 
+                // 如果需要清除多余空格，预处理内容
+                if (trimSpaces)
+                {
+                    content = CleanExtraSpaces(content);
+                }
+
                 // 实际执行插入
-                return ExecuteFormattedInsert(targetHeading, content, formatType, indentLevel, addSpacing, insertPosition);
+                return ExecuteFormattedInsert(targetHeading, content, formatType, indentLevel, addSpacing, insertPosition, trimSpaces);
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"格式化插入内容时出错: {ex.Message}");
                 return JsonConvert.SerializeObject(new { success = false, message = $"插入失败: {ex.Message}" });
             }
+        }
+
+        // 清除内容中的多余空格和空行
+        private static string CleanExtraSpaces(string content)
+        {
+            if (string.IsNullOrEmpty(content)) return content;
+
+            // 移除行尾空格
+            content = System.Text.RegularExpressions.Regex.Replace(content, @"[ \t]+$", "", System.Text.RegularExpressions.RegexOptions.Multiline);
+            // 移除行首空格（保留缩进）
+            // content = System.Text.RegularExpressions.Regex.Replace(content, @"^[ \t]+", "", System.Text.RegularExpressions.RegexOptions.Multiline);
+            // 将多个连续空行压缩为一个空行
+            content = System.Text.RegularExpressions.Regex.Replace(content, @"\n\s*\n\s*\n+", "\n\n");
+
+            return content.Trim();
         }
 
         // 生成预览内容
@@ -985,7 +1016,7 @@ namespace WordCopilot.utils
         }
 
         // 执行实际的格式化插入
-        private static string ExecuteFormattedInsert(string targetHeading, string content, string formatType, int indentLevel, bool addSpacing, string insertPosition = "end")
+        private static string ExecuteFormattedInsert(string targetHeading, string content, string formatType, int indentLevel, bool addSpacing, string insertPosition = "end", bool trimSpacesForThisOp = true)
         {
             try
             {
@@ -1003,6 +1034,7 @@ namespace WordCopilot.utils
                 }
 
                 dynamic titleRange;
+                dynamic headingRange = null; // 保存找到的标题Range，供后续使用
 
                 // 处理有标题和无标题的情况
                 if (string.IsNullOrEmpty(targetHeading))
@@ -1025,7 +1057,7 @@ namespace WordCopilot.utils
                         });
                     }
 
-                    dynamic headingRange = headingResult.headingInfo.range;
+                    headingRange = headingResult.headingInfo.range;
 
                     // 读取父标题层级（优先OutlineLevel，失败回退样式解析）
                     int parentLevel = 1;
@@ -1085,10 +1117,12 @@ namespace WordCopilot.utils
 
                 // 使用书签标记插入范围起点，确保后续清理只作用于本次插入内容
                 string insertStartBookmark = "OWC_START_" + Guid.NewGuid().ToString("N");
-                try { doc.Bookmarks.Add(insertStartBookmark, doc.Range(titleRange.Start, titleRange.Start)); } catch { }
+
+                // 标记是否需要创建新段落（标题下无内容的情况）
+                bool needCreateNewParagraph = false;
 
                 // 只有在找到标题的情况下才检查样式和换行
-                if (!string.IsNullOrEmpty(targetHeading))
+                if (!string.IsNullOrEmpty(targetHeading) && headingRange != null)
                 {
                     // 获取当前段落信息
                     dynamic currentPara = titleRange.Paragraphs[1];
@@ -1112,22 +1146,9 @@ namespace WordCopilot.utils
                     {
                         if (isHeadingStyle)
                         {
-                            // 如果当前在标题段落中，仅添加一次换行，开始新段落
-                            Debug.WriteLine("在标题段落中，添加一次换行并创建新段落");
-                            titleRange.InsertAfter("\r\n");
-                            titleRange.Collapse(0); // 移动到新行的开始
-
-                            // 确保新段落使用正文样式
-                            try
-                            {
-                                dynamic newPara = titleRange.Paragraphs[1];
-                                newPara.Style = "Normal"; // 设置为正文样式
-                                Debug.WriteLine("新段落样式已设置为Normal");
-                            }
-                            catch (Exception styleEx)
-                            {
-                                Debug.WriteLine($"设置段落样式时出错: {styleEx.Message}");
-                            }
+                            // 如果当前在标题段落中，标记需要创建新段落
+                            needCreateNewParagraph = true;
+                            Debug.WriteLine("front 模式，在标题段落中，将创建新段落");
                         }
                         else
                         {
@@ -1135,15 +1156,64 @@ namespace WordCopilot.utils
                             Debug.WriteLine("front 模式但当前位置非标题段，保持当前位置不前移");
                         }
                     }
-                    // insertPosition == "end" 时，titleRange 已经是标题下已有内容的末尾，不做段落前移，避免越过到下一个标题
-
-                    // 插入前间距：仅在非常必要时添加（默认情况下不添加）
-                    if (addSpacing)
+                    else // insertPosition == "end"
                     {
-                        Debug.WriteLine("用户明确要求添加前置间距");
-                        titleRange.InsertAfter("\r\n");
-                        titleRange.Collapse(0);
+                        // 关键修复：检查是否在标题段落中（即标题下无内容）
+                        if (isHeadingStyle)
+                        {
+                            // 标记需要创建新段落
+                            needCreateNewParagraph = true;
+                            Debug.WriteLine("end 模式，当前在标题段落中（标题下无内容），将创建新段落");
+                        }
+                        else
+                        {
+                            Debug.WriteLine("end 模式，当前不在标题段落中（已有内容），直接使用当前位置");
+                        }
                     }
+                }
+
+                // 如果需要创建新段落，在标题后直接创建
+                if (needCreateNewParagraph && headingRange != null)
+                {
+                    Debug.WriteLine("在原始标题后创建新正文段落");
+
+                    // 获取标题段落
+                    dynamic headingPara = headingRange.Paragraphs[1];
+
+                    // 在标题段落的末尾插入新段落
+                    // 使用 InsertParagraphAfter 方法，这是创建新段落的正确方式
+                    headingPara.Range.InsertParagraphAfter();
+
+                    // 获取新创建的段落（就是标题段落的下一个段落）
+                    dynamic newPara = headingPara.Next();
+                    if (newPara != null)
+                    {
+                        // 设置新段落的样式为正文
+                        try
+                        {
+                            newPara.Style = "Normal";
+                            Debug.WriteLine("新段落样式已设置为Normal");
+                        }
+                        catch (Exception styleEx)
+                        {
+                            Debug.WriteLine($"设置段落样式时出错: {styleEx.Message}");
+                        }
+
+                        // 更新 titleRange 为新段落的Range
+                        titleRange = newPara.Range;
+                        titleRange.Collapse(1); // 移动到段落开始
+                        Debug.WriteLine($"titleRange已更新到新段落: {titleRange.Start}");
+                    }
+                }
+
+                try { doc.Bookmarks.Add(insertStartBookmark, doc.Range(titleRange.Start, titleRange.Start)); } catch { }
+
+                // 插入前间距：仅在非常必要时添加（默认情况下不添加）
+                if (!string.IsNullOrEmpty(targetHeading) && addSpacing && !needCreateNewParagraph)
+                {
+                    Debug.WriteLine("用户明确要求添加前置间距");
+                    titleRange.InsertAfter("\r\n");
+                    titleRange.Collapse(0);
                 }
                 else
                 {
@@ -1211,7 +1281,8 @@ namespace WordCopilot.utils
                             Debug.WriteLine($"插入范围长度: {rangeLength} 字符");
 
                             // 只对合理大小的范围进行清理，避免处理过大的内容
-                            if (_enableRangeNormalization && rangeLength > 0 && rangeLength < 5000) // 限制范围大小
+                            // 仅当全局开关启用 且 本次操作选择清理空格时才执行范围规范化
+                            if (_enableRangeNormalization && trimSpacesForThisOp && rangeLength > 0 && rangeLength < 5000) // 限制范围大小
                             {
                                 dynamic insertedRange = doc.Range(startRange.Start, endRange.End);
                                 NormalizeInsertedRange(insertedRange, keepOneTrailingEmpty: addSpacing);
@@ -1221,6 +1292,10 @@ namespace WordCopilot.utils
                                 if (!_enableRangeNormalization)
                                 {
                                     Debug.WriteLine("范围清理功能已禁用");
+                                }
+                                else if (!trimSpacesForThisOp)
+                                {
+                                    Debug.WriteLine("本次操作未勾选清除空格，跳过范围规范化");
                                 }
                                 else
                                 {
@@ -1354,7 +1429,7 @@ namespace WordCopilot.utils
                 // 执行全部替换（wdReplaceAll = 2）
                 int replaceCount = 0;
                 bool found = true;
-                
+
                 // 循环替换，直到没有找到为止
                 while (found)
                 {
@@ -1373,7 +1448,7 @@ namespace WordCopilot.utils
                             ReplaceWith: Type.Missing,
                             Replace: 2 // wdReplaceAll = 2
                         );
-                        
+
                         if (found)
                         {
                             replaceCount++;
@@ -1409,7 +1484,7 @@ namespace WordCopilot.utils
                     find.Replacement.Text = " "; // 替换为一个空格
                     find.Forward = true;
                     find.Wrap = 0;
-                    
+
                     // 循环替换连续空格
                     while (find.Execute(
                         FindText: Type.Missing,
@@ -1565,19 +1640,39 @@ namespace WordCopilot.utils
                 dynamic selection = wordApp.Selection;
                 selection.SetRange(range.Start, range.Start);
 
-                // 检测内容类型并使用适当的插入方法
-                if (IsMarkdownContent(content))
+                // 优先检测并处理 LaTeX 公式，确保不会以纯文本形式落地
+                if (!string.IsNullOrWhiteSpace(content) && ContainsLatexFormula(content))
                 {
-                    Debug.WriteLine("检测到Markdown内容，使用HTML插入方法");
-                    // 如果是Markdown内容，转换为HTML后插入
-                    string htmlContent = ConvertMarkdownToHtml(content);
-                    _markdownToWord.InsertHtmlContentDirect(htmlContent);
+                    Debug.WriteLine("检测到LaTeX公式，使用占位符 + OMath 方式插入");
+
+                    // 1) 提取公式并替换为占位符 [公式N]
+                    var extraction = ReplaceFormulasWithPlaceholders(content);
+                    string contentWithPlaceholders = extraction.processed;
+                    var formulas = extraction.formulas;
+
+                    // 2) 将（含占位符的）Markdown 转为 HTML
+                    string htmlContent = IsMarkdownContent(contentWithPlaceholders)
+                        ? ConvertMarkdownToHtml(contentWithPlaceholders)
+                        : contentWithPlaceholders;
+
+                    // 3) 使用带 formulas 的插入逻辑，使占位符在插入后被逐个替换为真正的Word公式
+                    _markdownToWord.InsertHtmlContent(htmlContent, formulas);
                 }
                 else
                 {
-                    Debug.WriteLine("使用文本插入方法");
-                    // 普通文本直接插入
-                    _markdownToWord.InsertText(content);
+                    // 无公式时沿用原有逻辑
+                    // 检测内容类型并使用适当的插入方法
+                    if (IsMarkdownContent(content))
+                    {
+                        Debug.WriteLine("检测到Markdown内容，使用HTML插入方法");
+                        string htmlContent = ConvertMarkdownToHtml(content);
+                        _markdownToWord.InsertHtmlContentDirect(htmlContent);
+                    }
+                    else
+                    {
+                        Debug.WriteLine("使用文本插入方法");
+                        _markdownToWord.InsertText(content);
+                    }
                 }
 
                 // 设置缩进
@@ -1603,6 +1698,65 @@ namespace WordCopilot.utils
                 range.InsertAfter(content);
                 range.Collapse(0);
             }
+        }
+
+        // 检测是否包含 LaTeX 公式（行间 $$...$$ 或行内 $...$）
+        private static bool ContainsLatexFormula(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+            try
+            {
+                return System.Text.RegularExpressions.Regex.IsMatch(text, @"\$\$[\s\S]*?\$\$", System.Text.RegularExpressions.RegexOptions.Multiline) ||
+                       System.Text.RegularExpressions.Regex.IsMatch(text, @"(?<!\$)\$[^$\n]+?\$(?!\$)");
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // 将文本中的公式替换为占位符 [公式N]，并返回提取到的公式列表（用于后续在Word中替换为OMath）
+        private static (string processed, List<Newtonsoft.Json.Linq.JObject> formulas) ReplaceFormulasWithPlaceholders(string text)
+        {
+            var formulas = new List<Newtonsoft.Json.Linq.JObject>();
+            int idx = 0;
+
+            // 先处理行间公式 $$...$$
+            string processed = System.Text.RegularExpressions.Regex.Replace(
+                text,
+                @"\$\$([\s\S]*?)\$\$",
+                match =>
+                {
+                    string formula = match.Groups[1].Value;
+                    idx++;
+                    formulas.Add(new Newtonsoft.Json.Linq.JObject
+                    {
+                        ["formula"] = formula,
+                        ["isDisplayMode"] = true
+                    });
+                    return $"[公式{idx}]";
+                },
+                System.Text.RegularExpressions.RegexOptions.Multiline
+            );
+
+            // 再处理行内公式 $...$
+            processed = System.Text.RegularExpressions.Regex.Replace(
+                processed,
+                @"(?<!\$)\$([^$\n]+?)\$(?!\$)",
+                match =>
+                {
+                    string formula = match.Groups[1].Value;
+                    idx++;
+                    formulas.Add(new Newtonsoft.Json.Linq.JObject
+                    {
+                        ["formula"] = formula,
+                        ["isDisplayMode"] = false
+                    });
+                    return $"[公式{idx}]";
+                }
+            );
+
+            return (processed, formulas);
         }
 
         // 插入列表内容 - 简化版本，减少多余换行
@@ -2089,26 +2243,74 @@ namespace WordCopilot.utils
 
                 // 获取参数
                 string textToFind = GetParameterValue<string>(parameters, "text_to_find", "");
+                string scope = GetParameterValue<string>(parameters, "scope", "text");
+                string targetHeadingForScope = GetParameterValue<string>(parameters, "target_heading", "");
+                bool applyAll = GetParameterValue<bool>(parameters, "apply_all", false);
                 bool previewOnly = GetParameterValue<bool>(parameters, "preview_only", true); // 默认只预览
 
-                if (string.IsNullOrEmpty(textToFind))
+                // 强制纠偏：当提供了 target_heading 时，一律按 “heading” 范围处理
+                // 且当未提供 text_to_find 时，默认对该标题下“全部正文”应用样式（apply_all=true）
+                if (!string.IsNullOrWhiteSpace(targetHeadingForScope))
                 {
-                    return JsonConvert.SerializeObject(new { success = false, message = "要查找的文本不能为空" });
+                    scope = "heading";
+                    parameters["scope"] = "heading";
+                    if (string.IsNullOrWhiteSpace(textToFind))
+                    {
+                        applyAll = true;
+                        parameters["apply_all"] = true;
+                    }
+                }
+
+                // 确保作用对象开关具备默认值（前端也会展示为可配置项）
+                if (!parameters.ContainsKey("include_paragraphs")) parameters["include_paragraphs"] = true;
+                if (!parameters.ContainsKey("include_headings")) parameters["include_headings"] = false;
+                if (!parameters.ContainsKey("include_tables")) parameters["include_tables"] = false;
+                if (!parameters.ContainsKey("include_formulas")) parameters["include_formulas"] = false;
+                if (!parameters.ContainsKey("include_list_items")) parameters["include_list_items"] = false;
+
+                bool isRangeMode = applyAll || (scope == "document" || scope == "heading" || scope == "selection") || !string.IsNullOrEmpty(targetHeadingForScope);
+                if (!isRangeMode && string.IsNullOrEmpty(textToFind))
+                {
+                    return JsonConvert.SerializeObject(new { success = false, message = "要查找的文本不能为空（或使用scope/target_heading/apply_all进行范围批量处理）" });
                 }
 
                 // 如果只是预览，返回样式预览信息
                 if (previewOnly)
                 {
                     List<string> previewStyles = GenerateStylePreview(parameters);
+                    string targetDesc = "";
+                    if (isRangeMode)
+                    {
+                        if (scope == "heading" || !string.IsNullOrEmpty(targetHeadingForScope))
+                            targetDesc = $"标题“{(string.IsNullOrEmpty(targetHeadingForScope) ? "未指定" : targetHeadingForScope)}”下的正文";
+                        else if (scope == "selection")
+                            targetDesc = "当前选区的正文";
+                        else if (scope == "document")
+                            targetDesc = "全文正文";
+                        else
+                            targetDesc = "指定范围";
+                    }
+                    else
+                    {
+                        targetDesc = $"文本“{textToFind}”";
+                    }
                     return JsonConvert.SerializeObject(new
                     {
                         success = true,
                         action_type = "modify_style",
                         preview_mode = true,
                         text_to_find = textToFind,
+                        target_scope = scope,
+                        target_heading = targetHeadingForScope,
+                        apply_all = applyAll,
+                        include_paragraphs = GetParameterValue<bool>(parameters, "include_paragraphs", true),
+                        include_headings = GetParameterValue<bool>(parameters, "include_headings", false),
+                        include_tables = GetParameterValue<bool>(parameters, "include_tables", false),
+                        include_formulas = GetParameterValue<bool>(parameters, "include_formulas", false),
+                        include_list_items = GetParameterValue<bool>(parameters, "include_list_items", false),
                         preview_styles = previewStyles,
                         style_parameters = parameters,
-                        message = $"预览：将为文本 '{textToFind}' 应用以下样式"
+                        message = $"预览：将在{targetDesc}应用以下样式"
                     });
                 }
 
@@ -2127,25 +2329,34 @@ namespace WordCopilot.utils
         {
             List<string> previewStyles = new List<string>();
 
+            if (parameters.ContainsKey("font_name"))
+            {
+                string fontName = GetParameterValue<string>(parameters, "font_name", "");
+                if (!string.IsNullOrEmpty(fontName))
+                {
+                    previewStyles.Add($"字体名称: {fontName}");
+                }
+            }
+
             if (parameters.ContainsKey("font_size"))
             {
                 int fontSize = GetParameterValue<int>(parameters, "font_size", 0);
                 if (fontSize >= 8 && fontSize <= 72)
                 {
-                    previewStyles.Add($"🔤 字体大小: {fontSize}磅");
+                    previewStyles.Add($"字体大小: {fontSize}磅");
                 }
             }
 
             if (parameters.ContainsKey("font_bold"))
             {
                 bool bold = GetParameterValue<bool>(parameters, "font_bold", false);
-                previewStyles.Add($"🔲 粗体: {(bold ? "是" : "否")}");
+                previewStyles.Add($"粗体: {(bold ? "是" : "否")}");
             }
 
             if (parameters.ContainsKey("font_italic"))
             {
                 bool italic = GetParameterValue<bool>(parameters, "font_italic", false);
-                previewStyles.Add($"📐 斜体: {(italic ? "是" : "否")}");
+                previewStyles.Add($"斜体: {(italic ? "是" : "否")}");
             }
 
             if (parameters.ContainsKey("font_color"))
@@ -2153,7 +2364,7 @@ namespace WordCopilot.utils
                 string color = GetParameterValue<string>(parameters, "font_color", "");
                 if (!string.IsNullOrEmpty(color))
                 {
-                    previewStyles.Add($"🎨 字体颜色: {color}");
+                    previewStyles.Add($"字体颜色: {color}");
                 }
             }
 
@@ -2162,26 +2373,26 @@ namespace WordCopilot.utils
                 string bgColor = GetParameterValue<string>(parameters, "background_color", "");
                 if (!string.IsNullOrEmpty(bgColor))
                 {
-                    previewStyles.Add($"🖍️ 背景颜色: {(bgColor == "none" ? "无" : bgColor)}");
+                    previewStyles.Add($"背景颜色: {(bgColor == "none" ? "无" : bgColor)}");
                 }
             }
 
             if (parameters.ContainsKey("paragraph_spacing_before"))
             {
                 int spacingBefore = GetParameterValue<int>(parameters, "paragraph_spacing_before", 0);
-                previewStyles.Add($"📏 段前间距: {spacingBefore}磅");
+                previewStyles.Add($"段前间距: {spacingBefore}磅");
             }
 
             if (parameters.ContainsKey("paragraph_spacing_after"))
             {
                 int spacingAfter = GetParameterValue<int>(parameters, "paragraph_spacing_after", 0);
-                previewStyles.Add($"📐 段后间距: {spacingAfter}磅");
+                previewStyles.Add($"段后间距: {spacingAfter}磅");
             }
 
             if (parameters.ContainsKey("line_spacing"))
             {
                 double lineSpacing = GetParameterValue<double>(parameters, "line_spacing", 1.0);
-                previewStyles.Add($"📊 行间距: {lineSpacing}倍");
+                previewStyles.Add($"行间距: {lineSpacing}倍");
             }
 
             return previewStyles;
@@ -2210,6 +2421,26 @@ namespace WordCopilot.utils
                 const int maxRetries = 3;
                 const int retryDelayMs = 500;
                 string result = null;
+                // 读取范围与控制参数
+                string scope = GetParameterValue<string>(parameters, "scope", "text");
+                string targetHeadingForScope = GetParameterValue<string>(parameters, "target_heading", "");
+                bool applyAll = GetParameterValue<bool>(parameters, "apply_all", false);
+                int maxMatches = GetParameterValue<int>(parameters, "max_matches", 50);
+                if (maxMatches < 1) maxMatches = 1;
+                if (maxMatches > 1000) maxMatches = 1000;
+                // 执行阶段同样做纠偏：有 target_heading 时强制在标题范围内处理
+                if (!string.IsNullOrWhiteSpace(targetHeadingForScope))
+                {
+                    scope = "heading";
+                    parameters["scope"] = "heading";
+                    string execTextToFind = GetParameterValue<string>(parameters, "text_to_find", "");
+                    if (string.IsNullOrWhiteSpace(execTextToFind))
+                    {
+                        applyAll = true;
+                        parameters["apply_all"] = true;
+                    }
+                }
+                bool isRangeMode = applyAll || (scope == "document" || scope == "heading" || scope == "selection") || !string.IsNullOrEmpty(targetHeadingForScope);
 
                 for (int attempt = 1; attempt <= maxRetries; attempt++)
                 {
@@ -2218,6 +2449,215 @@ namespace WordCopilot.utils
                         Debug.WriteLine($"开始样式修改，尝试第 {attempt} 次...");
 
                         string textToFind = GetParameterValue<string>(parameters, "text_to_find", "");
+
+                        // 范围模式：对指定范围内的“正文段落”批量应用样式（跳过表格/公式/标题）
+                        if (isRangeMode)
+                        {
+                            // 获取Word实例（使用不同命名避免与后续查找模式变量冲突）
+                            dynamic wordAppRange = _markdownToWord.GetWordApplication();
+                            if (wordAppRange == null)
+                            {
+                                result = JsonConvert.SerializeObject(new { success = false, message = "无法连接到Word应用程序" });
+                                break;
+                            }
+                            dynamic docRange = _markdownToWord.GetActiveDocument(wordAppRange);
+                            if (docRange == null)
+                            {
+                                result = JsonConvert.SerializeObject(new { success = false, message = "无法获取活动文档" });
+                                break;
+                            }
+
+                            int modifiedParaCount = 0;
+                            List<string> appliedStylesRange = new List<string>();
+                            // 读取作用对象开关（范围模式下用于段落预筛）
+                            bool includeTablesRange = GetParameterValue<bool>(parameters, "include_tables", false);
+                            bool includeFormulasRange = GetParameterValue<bool>(parameters, "include_formulas", false);
+                            bool includeHeadingsRange = GetParameterValue<bool>(parameters, "include_headings", false);
+                            bool includeListItemsRange = GetParameterValue<bool>(parameters, "include_list_items", false);
+                            Debug.WriteLine($"样式修改作用范围 - 标题:{includeHeadingsRange}, 表格:{includeTablesRange}, 列表项:{includeListItemsRange}");
+
+                            Action<dynamic> processParagraph = (dynamic para) =>
+                            {
+                                try
+                                {
+                                    if (para == null) return;
+                                    dynamic pr = para.Range;
+                                    string raw = "";
+                                    try { raw = (pr.Text ?? "").ToString().Trim(); } catch { }
+                                    if (string.IsNullOrWhiteSpace(raw)) return;
+                                    // 表格：仅当未勾选“表格”时才跳过
+                                    try
+                                    {
+                                        if (!includeTablesRange && pr.Tables != null && pr.Tables.Count > 0) return;
+                                    }
+                                    catch { }
+                                    // 标题：仅在未勾选“标题”时跳过（按样式名或大纲级别判断）
+                                    try
+                                    {
+                                        var style = para.get_Style();
+                                        string styleName = style?.NameLocal ?? "";
+                                        bool isHeading = false;
+                                        if (!string.IsNullOrEmpty(styleName) && IsHeadingStyle((styleName ?? "").ToString()))
+                                        {
+                                            isHeading = true;
+                                        }
+                                        try
+                                        {
+                                            int ol = -1;
+                                            try { ol = para.OutlineLevel; } catch { }
+                                            if (ol >= 1 && ol <= 9) isHeading = true;
+                                        }
+                                        catch { }
+                                        if (!includeHeadingsRange && isHeading) return;
+                                    }
+                                    catch { }
+                                    // 公式：仅当未勾选“公式”时才跳过
+                                    try
+                                    {
+                                        if (!includeFormulasRange && pr.OMaths != null && pr.OMaths.Count > 0) return;
+                                    }
+                                    catch { }
+
+                                    ApplyTextStyles(pr, parameters, appliedStylesRange);
+                                    modifiedParaCount++;
+                                }
+                                catch { }
+                            };
+
+                            if (scope == "document")
+                            {
+                                for (int i = 1; i <= docRange.Paragraphs.Count; i++)
+                                {
+                                    dynamic para = docRange.Paragraphs[i];
+                                    processParagraph(para);
+                                }
+                            }
+                            else if (scope == "selection")
+                            {
+                                dynamic selection = wordAppRange.Selection;
+                                if (selection != null)
+                                {
+                                    dynamic paras = selection.Paragraphs;
+                                    for (int i = 1; i <= paras.Count; i++)
+                                    {
+                                        dynamic para = paras[i];
+                                        processParagraph(para);
+                                    }
+                                }
+                            }
+                            else // heading
+                            {
+                                var headingResult = FindHeadingEfficiently(docRange, string.IsNullOrEmpty(targetHeadingForScope) ? "" : targetHeadingForScope, "keywords");
+                                if (!headingResult.found)
+                                {
+                                    result = JsonConvert.SerializeObject(new
+                                    {
+                                        success = false,
+                                        message = $"未找到标题: {targetHeadingForScope}",
+                                        suggestions = headingResult.suggestions ?? new string[0]
+                                    });
+                                    break;
+                                }
+
+                                dynamic headingRange = headingResult.headingInfo.range;
+                                int parentLevel = 1;
+                                try
+                                {
+                                    dynamic headingPara = headingRange.Paragraphs[1];
+                                    try
+                                    {
+                                        var ol = headingPara.OutlineLevel;
+                                        if (ol != null && ol is int) parentLevel = (int)ol;
+                                    }
+                                    catch { }
+                                    if (parentLevel < 1 || parentLevel > 9)
+                                    {
+                                        try
+                                        {
+                                            string styleName = "";
+                                            try { styleName = headingPara.Style?.NameLocal ?? headingPara.Style?.Name ?? headingPara.Style.ToString(); } catch { }
+                                            parentLevel = ExtractHeadingLevel(styleName);
+                                            if (parentLevel < 1 || parentLevel > 9) parentLevel = 1;
+                                        }
+                                        catch { parentLevel = 1; }
+                                    }
+                                }
+                                catch { parentLevel = 1; }
+
+                                Debug.WriteLine($"修改样式的目标标题层级: {parentLevel}");
+
+                                bool started = false;
+                                for (int i = 1; i <= docRange.Paragraphs.Count; i++)
+                                {
+                                    dynamic para = docRange.Paragraphs[i];
+                                    dynamic pr = para.Range;
+                                    if (!started)
+                                    {
+                                        if (pr.Start >= headingRange.End) started = true;
+                                        else continue;
+                                    }
+
+                                    // 检查是否遇到同级或更高级标题（使用OutlineLevel优先，样式名作为备用）
+                                    try
+                                    {
+                                        int currentLevel = -1;
+                                        bool isHeadingPara = false;
+
+                                        // 优先使用OutlineLevel判断
+                                        try
+                                        {
+                                            var olp = para.OutlineLevel;
+                                            if (olp != null && olp is int)
+                                            {
+                                                currentLevel = (int)olp;
+                                                if (currentLevel >= 1 && currentLevel <= 9)
+                                                {
+                                                    isHeadingPara = true;
+                                                }
+                                            }
+                                        }
+                                        catch { }
+
+                                        // 备用：使用样式名判断
+                                        if (!isHeadingPara)
+                                        {
+                                            var style = para.get_Style();
+                                            string styleName = style?.NameLocal ?? "";
+                                            if (!string.IsNullOrEmpty(styleName) && IsHeadingStyle(styleName))
+                                            {
+                                                isHeadingPara = true;
+                                                currentLevel = ExtractHeadingLevel(styleName ?? "");
+                                            }
+                                        }
+
+                                        // 如果是标题，且级别 <= 父标题级别，停止处理
+                                        if (isHeadingPara && currentLevel > 0 && currentLevel <= parentLevel)
+                                        {
+                                            Debug.WriteLine($"遇到同级或更高级标题 (级别 {currentLevel})，停止处理");
+                                            break;
+                                        }
+                                    }
+                                    catch { }
+
+                                    processParagraph(para);
+                                }
+                            }
+
+                            if (modifiedParaCount == 0)
+                            {
+                                result = JsonConvert.SerializeObject(new { success = false, message = "未找到可修改的正文段落" });
+                            }
+                            else
+                            {
+                                result = JsonConvert.SerializeObject(new
+                                {
+                                    success = true,
+                                    message = $"成功修改了 {modifiedParaCount} 个正文段落的样式",
+                                    modified_paragraphs = modifiedParaCount
+                                });
+                            }
+                            break;
+                        }
 
                         // 检查文本长度 - Word COM Find对象有长度限制
                         if (string.IsNullOrEmpty(textToFind))
@@ -2287,7 +2727,7 @@ namespace WordCopilot.utils
 
                         int modifiedCount = 0;
                         List<string> appliedStyles = new List<string>();
-                        const int maxMatches = 10; // 限制最大匹配数，避免过度匹配和重复
+                        int maxMatchesLocal = maxMatches; // 限制最大匹配数，避免过度匹配和重复
 
                         Debug.WriteLine($"开始查找文本: {textToFind}");
 
@@ -2295,7 +2735,7 @@ namespace WordCopilot.utils
                         bool foundAny = false;
                         int lastFoundPosition = -1; // 记录上次找到的位置，避免重复
 
-                        while (findObj.Execute() && modifiedCount < maxMatches)
+                        while (findObj.Execute() && modifiedCount < maxMatchesLocal)
                         {
                             foundAny = true;
 
@@ -2395,7 +2835,7 @@ namespace WordCopilot.utils
 
                             // 再次尝试查找
                             int fallbackLastPosition = -1;
-                            while (findObj.Execute() && modifiedCount < maxMatches)
+                            while (findObj.Execute() && modifiedCount < maxMatchesLocal)
                             {
                                 // 检查备用策略中的重复位置
                                 int currentPos = range.Start;
@@ -2521,6 +2961,82 @@ namespace WordCopilot.utils
         {
             try
             {
+                // 读取作用对象配置
+                bool includeParagraphs = GetParameterValue<bool>(parameters, "include_paragraphs", true);
+                bool includeHeadings = GetParameterValue<bool>(parameters, "include_headings", false);
+                bool includeTables = GetParameterValue<bool>(parameters, "include_tables", false);
+                bool includeFormulas = GetParameterValue<bool>(parameters, "include_formulas", false);
+                bool includeListItems = GetParameterValue<bool>(parameters, "include_list_items", false);
+
+                // 保护：根据作用对象判断是否跳过
+                try
+                {
+                    dynamic paraForCheck = range?.Paragraphs?[1];
+                    if (paraForCheck != null)
+                    {
+                        bool isHeadingPara = false;
+                        bool isListItem = false;
+                        bool inTable = false;
+                        bool inFormula = false;
+                        try
+                        {
+                            var st = paraForCheck.get_Style();
+                            string stName = st?.NameLocal ?? st?.Name ?? "";
+                            if (!string.IsNullOrEmpty(stName) && IsHeadingStyle(stName.ToString()))
+                            {
+                                isHeadingPara = true;
+                            }
+                        }
+                        catch { }
+                        // 进一步通过大纲级别判断（1..9 视为标题层级）
+                        try
+                        {
+                            int ol = -1;
+                            try { ol = paraForCheck.OutlineLevel; } catch { }
+                            if (ol >= 1 && ol <= 9) isHeadingPara = true;
+                        }
+                        catch { }
+                        // 列表项判断
+                        try
+                        {
+                            dynamic lf = paraForCheck.Range?.ListFormat;
+                            if (lf != null)
+                            {
+                                int lt = 0;
+                                try { lt = lf.ListType; } catch { }
+                                if (lt != 0) isListItem = true;
+                            }
+                        }
+                        catch { }
+                        // 表格判断
+                        try { if (paraForCheck.Range?.Tables != null && paraForCheck.Range.Tables.Count > 0) inTable = true; } catch { }
+                        // 公式判断
+                        try { if (paraForCheck.Range?.OMaths != null && paraForCheck.Range.OMaths.Count > 0) inFormula = true; } catch { }
+
+                        // 类别允许性判定
+                        bool allowed = false;
+                        if (isHeadingPara && includeHeadings) allowed = true;
+                        else if (isListItem && includeListItems) allowed = true;
+                        else if (inTable && includeTables) allowed = true;
+                        else if (inFormula && includeFormulas) allowed = true;
+                        else if (!isHeadingPara && !isListItem && !inTable && !inFormula && includeParagraphs) allowed = true;
+
+                        if (!allowed) return;
+                    }
+                }
+                catch { /* 安全忽略样式检测异常 */ }
+
+                // 字体名称
+                if (parameters.ContainsKey("font_name"))
+                {
+                    string fontName = GetParameterValue<string>(parameters, "font_name", "");
+                    if (!string.IsNullOrEmpty(fontName))
+                    {
+                        range.Font.Name = fontName;
+                        appliedStyles.Add($"字体名称: {fontName}");
+                    }
+                }
+
                 // 字体大小
                 if (parameters.ContainsKey("font_size"))
                 {
@@ -3019,7 +3535,7 @@ namespace WordCopilot.utils
                     int totalHeadings = headings.Count;
                     int totalPages = (int)Math.Ceiling((double)totalHeadings / pageSize);
                     int startIndex = page * pageSize;
-                    
+
                     if (startIndex >= totalHeadings)
                     {
                         // 页码超出范围
@@ -3040,7 +3556,7 @@ namespace WordCopilot.utils
                         // 返回当前页的数据
                         var pagedHeadings = headings.Skip(startIndex).Take(pageSize).ToList();
                         bool hasMore = (startIndex + pageSize) < totalHeadings;
-                        
+
                         result = new
                         {
                             total_headings = totalHeadings,
@@ -3052,7 +3568,7 @@ namespace WordCopilot.utils
                             headings = pagedHeadings,
                             message = $"已返回第 {page + 1}/{totalPages} 页（共 {totalHeadings} 个标题）"
                         };
-                        
+
                         Debug.WriteLine($"分页返回: 页{page}, 每页{pageSize}, 返回{pagedHeadings.Count}个标题");
                     }
                 }
@@ -3065,7 +3581,7 @@ namespace WordCopilot.utils
                         target_level = targetLevel,
                         headings = headings
                     };
-                    
+
                     Debug.WriteLine($"全量返回: {headings.Count}个标题");
                 }
 
@@ -3810,10 +4326,10 @@ namespace WordCopilot.utils
                 {
                     Debug.WriteLine("未提供标题文本，回退为返回文档整体结构");
                     NotifyProgress("未提供标题文本，返回文档标题列表");
-                    
+
                     // 调用 GetDocumentHeadings 获取文档结构
                     string structureResult = GetDocumentHeadings(new Dictionary<string, object>());
-                    
+
                     // 尝试解析结果并添加 mode 标记
                     try
                     {
@@ -3835,10 +4351,10 @@ namespace WordCopilot.utils
                     {
                         Debug.WriteLine($"解析文档结构时出错: {parseEx.Message}");
                     }
-                    
+
                     // 如果解析失败，返回原始结果包装
-                    return JsonConvert.SerializeObject(new 
-                    { 
+                    return JsonConvert.SerializeObject(new
+                    {
                         success = true,
                         mode = "document_structure",
                         message = "未提供标题文本，已返回文档整体结构（标题列表）",
@@ -4177,52 +4693,117 @@ namespace WordCopilot.utils
         {
             try
             {
-                Debug.WriteLine($"开始提取标题下的内容: {headingInfo.text}");
+                Debug.WriteLine($"========== 开始提取标题下的内容 ==========");
+                Debug.WriteLine($"目标标题: {headingInfo.text}, 级别: {headingInfo.level}");
 
                 var content = new StringBuilder();
                 dynamic headingRange = headingInfo.range;
                 int headingLevel = headingInfo.level;
                 int headingEnd = headingRange.End;
 
+                Debug.WriteLine($"标题Range: Start={headingRange.Start}, End={headingEnd}");
+
                 // 从标题后开始读取内容
                 int contentStart = headingEnd;
                 int contentEnd = doc.Content.End;
+                int checkedParas = 0;
+                bool foundBoundary = false;
 
                 // 查找下一个同级或更高级的标题，确定内容边界
                 foreach (dynamic para in doc.Paragraphs)
                 {
                     try
                     {
-                        if (para.Range.Start <= headingEnd) continue; // 跳过当前标题及之前的内容
+                        checkedParas++;
+                        int paraStart = para.Range.Start;
 
+                        // 关键修复：使用 < 而不是 <=，避免跳过紧邻的下一个标题
+                        if (paraStart < headingEnd)
+                        {
+                            // 跳过当前标题及之前的内容
+                            continue;
+                        }
+
+                        // 获取段落文本用于调试
+                        string paraText = "";
+                        try { paraText = para.Range.Text?.Trim() ?? ""; } catch { }
+                        if (!string.IsNullOrEmpty(paraText))
+                        {
+                            paraText = paraText.Replace("\r", "").Replace("\n", "").Replace("\x07", "").Trim();
+                        }
+
+                        // 检查 OutlineLevel
                         var outlineLevel = para.OutlineLevel;
+                        bool isHeadingByOutline = false;
+                        int paraLevel = 0;
+
                         if (outlineLevel != null && outlineLevel >= 1 && outlineLevel <= 9)
                         {
-                            int paraLevel = (int)outlineLevel;
+                            paraLevel = (int)outlineLevel;
+                            isHeadingByOutline = true;
+                        }
 
+                        // 备用：检查样式名
+                        bool isHeadingByStyle = false;
+                        int styleLevelValue = 0;
+                        try
+                        {
+                            var style = para.get_Style();
+                            string styleName = style?.NameLocal ?? "";
+                            if (!string.IsNullOrEmpty(styleName) && IsHeadingStyle(styleName))
+                            {
+                                isHeadingByStyle = true;
+                                styleLevelValue = ExtractHeadingLevel(styleName);
+                            }
+                        }
+                        catch { }
+
+                        bool isHeadingPara = isHeadingByOutline || isHeadingByStyle;
+                        if (isHeadingByOutline) paraLevel = (int)outlineLevel;
+                        else if (isHeadingByStyle) paraLevel = styleLevelValue;
+
+                        // 详细日志
+                        if (!string.IsNullOrEmpty(paraText) && paraText.Length < 100)
+                        {
+                            Debug.WriteLine($"  段落#{checkedParas}: \"{paraText}\"");
+                            Debug.WriteLine($"    OutlineLevel={outlineLevel}, 是标题(Outline)={isHeadingByOutline}, 是标题(Style)={isHeadingByStyle}, 级别={paraLevel}");
+                        }
+
+                        if (isHeadingPara)
+                        {
                             // 如果是同级或更高级标题，停止
                             if (paraLevel <= headingLevel)
                             {
-                                contentEnd = para.Range.Start;
-                                Debug.WriteLine($"找到边界标题: {para.Range.Text?.Trim()} (级别: {paraLevel})");
+                                contentEnd = paraStart;
+                                foundBoundary = true;
+                                Debug.WriteLine($"★★★ 找到边界标题: \"{paraText}\" (级别 {paraLevel})，停止提取 ★★★");
                                 break;
                             }
 
                             // 如果不包含子标题，遇到下级标题也要停止
                             if (!includeSubHeadings && paraLevel > headingLevel)
                             {
-                                contentEnd = para.Range.Start;
-                                Debug.WriteLine($"不包含子标题，遇到下级标题停止: {para.Range.Text?.Trim()} (级别: {paraLevel})");
+                                contentEnd = paraStart;
+                                foundBoundary = true;
+                                Debug.WriteLine($"★★★ 不包含子标题，遇到下级标题停止: \"{paraText}\" (级别 {paraLevel}) ★★★");
                                 break;
                             }
+
+                            Debug.WriteLine($"  → 是子标题，继续（包含子标题模式）");
+                        }
+                        else
+                        {
+                            Debug.WriteLine($"  → 是正文段落");
                         }
                     }
                     catch (Exception ex)
                     {
-                        Debug.WriteLine($"处理段落边界时出错: {ex.Message}");
+                        Debug.WriteLine($"处理段落#{checkedParas}边界时出错: {ex.Message}");
                         continue;
                     }
                 }
+
+                Debug.WriteLine($"边界查找完成: 检查了{checkedParas}个段落, 找到边界={foundBoundary}, 内容范围=[{contentStart}, {contentEnd})");
 
                 // 提取指定范围的内容
                 if (contentEnd > contentStart)
@@ -4231,6 +4812,12 @@ namespace WordCopilot.utils
                     {
                         var contentRange = doc.Range(contentStart, contentEnd);
                         string rawContent = contentRange.Text ?? "";
+
+                        Debug.WriteLine($"提取的原始内容长度: {rawContent.Length} 字符");
+                        if (rawContent.Length > 0 && rawContent.Length < 200)
+                        {
+                            Debug.WriteLine($"原始内容预览: {rawContent.Replace("\r", "\\r").Replace("\n", "\\n").Replace("\t", "\\t")}");
+                        }
 
                         // 清理内容
                         rawContent = rawContent.Replace("\r", "\n")
@@ -4252,7 +4839,8 @@ namespace WordCopilot.utils
                             rawContent = rawContent.Substring(0, maxLength) + "...[内容已截断]";
                         }
 
-                        Debug.WriteLine($"提取内容完成，长度: {rawContent.Length} 字符");
+                        Debug.WriteLine($"清理后内容长度: {rawContent.Length} 字符");
+                        Debug.WriteLine($"========== 提取内容完成 ==========");
                         return rawContent;
                     }
                     catch (Exception ex)
@@ -4263,13 +4851,15 @@ namespace WordCopilot.utils
                 }
                 else
                 {
-                    Debug.WriteLine("标题下没有内容");
+                    Debug.WriteLine("标题下没有内容（contentEnd <= contentStart）");
+                    Debug.WriteLine($"========== 提取内容完成 ==========");
                     return "该标题下没有内容。";
                 }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"提取标题内容时出错: {ex.Message}");
+                Debug.WriteLine($"异常堆栈: {ex.StackTrace}");
                 return $"提取内容失败: {ex.Message}";
             }
         }
@@ -4393,25 +4983,25 @@ namespace WordCopilot.utils
                     var tbl = new StringBuilder();
                     int cut = -1;
                     bool hasEmptyLine = false;
-                    
+
                     for (int i = 0; i < segs.Length; i++)
                     {
                         var line = segs[i].Trim();
-                        
+
                         // 遇到空行标记，但继续检查下一行
                         if (string.IsNullOrWhiteSpace(line))
                         {
                             hasEmptyLine = true;
                             continue;
                         }
-                        
+
                         // 如果之前遇到过空行，且当前行不是表格行，说明表格结束
                         if (hasEmptyLine && !line.Contains("|"))
                         {
                             cut = i;
                             break;
                         }
-                        
+
                         // 如果当前行包含竖线，认为是表格行
                         if (line.Contains("|"))
                         {
@@ -4453,31 +5043,31 @@ namespace WordCopilot.utils
 
                             // 表格主体：header + sep + 其后数据行（同一行或多行）
                             string afterSep = content.Substring(sepMatch.Index + sepMatch.Length).TrimStart();
-                            
+
                             // 逐行提取表格数据行，直到遇到非表格行
                             var sepLines = afterSep.Split(new[] { '\r', '\n' }, StringSplitOptions.None);
                             var rowsBuilder = new StringBuilder();
                             int cutIndex = -1;
                             bool hasEmptyLine = false;
-                            
+
                             for (int i = 0; i < sepLines.Length; i++)
                             {
                                 var line = sepLines[i].Trim();
-                                
+
                                 // 遇到空行标记，但继续检查下一行
                                 if (string.IsNullOrWhiteSpace(line))
                                 {
                                     hasEmptyLine = true;
                                     continue;
                                 }
-                                
+
                                 // 如果之前遇到过空行，且当前行不是表格行，说明表格结束
                                 if (hasEmptyLine && !line.Contains("|"))
                                 {
                                     cutIndex = i;
                                     break;
                                 }
-                                
+
                                 // 如果当前行包含竖线，认为是表格行
                                 if (line.Contains("|"))
                                 {
@@ -4491,7 +5081,7 @@ namespace WordCopilot.utils
                                     break;
                                 }
                             }
-                            
+
                             string rowsChunk = rowsBuilder.ToString();
                             afterTable = "";
                             if (cutIndex >= 0 && cutIndex < sepLines.Length)
@@ -4516,25 +5106,25 @@ namespace WordCopilot.utils
                                 var tbl = new StringBuilder();
                                 int cut = -1;
                                 bool hasEmptyLine = false;
-                                
+
                                 for (int i = 0; i < lines.Length; i++)
                                 {
                                     var line = lines[i].Trim();
-                                    
+
                                     // 遇到空行标记，但继续检查下一行
                                     if (string.IsNullOrWhiteSpace(line))
                                     {
                                         hasEmptyLine = true;
                                         continue;
                                     }
-                                    
+
                                     // 如果之前遇到过空行，且当前行不是表格行，说明表格结束
                                     if (hasEmptyLine && !line.Contains("|"))
                                     {
                                         cut = i;
                                         break;
                                     }
-                                    
+
                                     // 如果当前行包含竖线，认为是表格行
                                     if (line.Contains("|"))
                                     {
@@ -4598,7 +5188,7 @@ namespace WordCopilot.utils
                 {
                     range.InsertAfter("\r\n\r\n");
                     range.Collapse(0);
-                    
+
                     // 递归处理：如果afterTable中还包含表格，继续使用InsertMixedContent
                     if (ContainsTableStructure(afterTable))
                     {
@@ -4894,26 +5484,40 @@ namespace WordCopilot.utils
                     try { headingLevel = ExtractHeadingLevel(headingStyle); } catch { headingLevel = 1; }
                 }
 
-                Debug.WriteLine($"标题级别(推断): {headingLevel}, 样式: {headingStyle}");
+                Debug.WriteLine($"目标标题级别: {headingLevel}, 样式: {headingStyle}, Range: {headingRange.Start}-{headingRange.End}");
 
-                // 从标题的下一个段落开始查找
-                dynamic currentRange = headingRange.Duplicate;
-                currentRange.Collapse(0); // 移动到标题末尾
+                int headingStart = headingRange.Start;
+                int headingEnd = headingRange.End;
+                Debug.WriteLine($"标题位置: {headingStart}-{headingEnd}");
 
-                // 移动到下一个段落
-                currentRange.Move(4, 1); // wdParagraph = 4
-
-                // 查找该标题下的所有内容，直到遇到同级或更高级标题
-                dynamic lastContentRange = currentRange.Duplicate;
+                // 直接遍历文档的所有段落，查找标题后的内容
+                dynamic lastContentRange = null;
                 bool foundContent = false;
+                int checkedParas = 0;
 
-                while (currentRange.Start < doc.Content.End)
+                dynamic paragraphs = doc.Paragraphs;
+                int totalParas = paragraphs.Count;
+                Debug.WriteLine($"文档总段落数: {totalParas}");
+
+                for (int i = 1; i <= totalParas; i++)
                 {
                     try
                     {
-                        dynamic para = currentRange.Paragraphs[1];
+                        dynamic para = paragraphs[i];
+                        int paraStart = para.Range.Start;
+                        int paraEnd = para.Range.End;
+
+                        // 跳过标题本身及之前的段落
+                        if (paraEnd <= headingEnd)
+                        {
+                            continue;
+                        }
+
+                        checkedParas++;
+
                         bool isHeadingPara = false;
                         int paraLevel = 0;
+
                         // 优先用 OutlineLevel 判断
                         try
                         {
@@ -4938,60 +5542,72 @@ namespace WordCopilot.utils
                             }
                         }
 
+                        Debug.WriteLine($"检查段落 #{checkedParas}, 位置: {paraStart}-{paraEnd}, 是否标题: {isHeadingPara}, 级别: {paraLevel}");
+
                         if (isHeadingPara)
                         {
                             // 如果遇到同级或更高级标题，停止查找
                             if (paraLevel <= headingLevel)
                             {
-                                Debug.WriteLine($"遇到同级或更高级标题 (级别 {paraLevel})，停止查找");
+                                Debug.WriteLine($"★★★ 遇到同级或更高级标题 (级别 {paraLevel})，停止查找 ★★★");
                                 break;
                             }
+                            else
+                            {
+                                // 遇到子标题，继续向下查找，但不将子标题本身当作内容
+                                Debug.WriteLine($"遇到子标题 (级别 {paraLevel})，继续查找其内容");
+                            }
                         }
-
-                        // 检查段落是否有实际内容（不是空段落）
-                        string paraText = para.Range.Text?.ToString() ?? "";
-                        if (!string.IsNullOrWhiteSpace(paraText.Replace("\r", "").Replace("\n", "")))
+                        else
                         {
-                            // 更新最后有内容的位置
-                            lastContentRange = para.Range.Duplicate;
-                            lastContentRange.Collapse(0); // 移动到段落末尾
-                            foundContent = true;
-                            Debug.WriteLine($"找到内容段落，更新插入位置到: {lastContentRange.Start}");
-                        }
+                            // 只有非标题段落才作为内容段落
+                            string paraText = para.Range.Text?.ToString() ?? "";
+                            string cleanText = paraText.Replace("\r", "").Replace("\n", "").Trim();
 
-                        // 移动到下一个段落
-                        if (currentRange.Move(4, 1) == 0) // wdParagraph = 4
-                        {
-                            break; // 无法移动，到达文档末尾
+                            if (!string.IsNullOrWhiteSpace(cleanText))
+                            {
+                                Debug.WriteLine($"找到内容段落: '{cleanText.Substring(0, Math.Min(50, cleanText.Length))}'");
+
+                                // 关键修复：使用段落的Range，并确保不会跨越到下一个段落
+                                lastContentRange = para.Range.Duplicate;
+                                // Collapse(0) 移动到Range末尾（段落末尾，包含段落标记）
+                                lastContentRange.Collapse(0);
+                                foundContent = true;
+
+                                Debug.WriteLine($"更新插入位置到段落末尾: {lastContentRange.Start}");
+                            }
+                            else
+                            {
+                                Debug.WriteLine("跳过空段落");
+                            }
                         }
                     }
                     catch (Exception ex)
                     {
-                        Debug.WriteLine($"处理段落时出错: {ex.Message}");
-                        // 出错时保守返回标题末尾，避免越界
-                        dynamic insertRange = headingRange.Duplicate;
-                        insertRange.Collapse(0);
-                        return insertRange;
+                        Debug.WriteLine($"处理段落 #{i} 时出错: {ex.Message}");
                     }
                 }
 
-                if (foundContent)
+                Debug.WriteLine($"检查了 {checkedParas} 个段落");
+
+                if (foundContent && lastContentRange != null)
                 {
-                    Debug.WriteLine($"找到标题下的已有内容，插入位置: {lastContentRange.Start}");
+                    Debug.WriteLine($"✓ 找到标题下的已有内容，插入位置: {lastContentRange.Start}");
                     return lastContentRange;
                 }
                 else
                 {
                     // 没有找到内容，直接在标题后插入
                     dynamic insertRange = headingRange.Duplicate;
-                    insertRange.Collapse(0); // 移动到标题末尾
-                    Debug.WriteLine($"标题下无内容，直接在标题后插入: {insertRange.Start}");
+                    insertRange.Collapse(0);
+                    Debug.WriteLine($"✓ 标题下无内容，直接在标题后插入: {insertRange.Start}");
                     return insertRange;
                 }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"查找最佳插入位置时出错: {ex.Message}");
+                Debug.WriteLine($"异常堆栈: {ex.StackTrace}");
                 // 出错时回退到简单逻辑
                 dynamic fallbackRange = headingRange.Duplicate;
                 fallbackRange.Collapse(0);

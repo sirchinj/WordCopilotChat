@@ -109,9 +109,17 @@ namespace WordCopilotChat
             // nudDefaultTemp
             // 
             this.nudDefaultTemp.DecimalPlaces = 1;
-            this.nudDefaultTemp.Increment = new decimal(new int[] { 1, 0, 0, 65536 });
+            this.nudDefaultTemp.Increment = new decimal(new int[] {
+            1,
+            0,
+            0,
+            65536});
             this.nudDefaultTemp.Location = new System.Drawing.Point(170, 23);
-            this.nudDefaultTemp.Maximum = new decimal(new int[] { 2, 0, 0, 0 });
+            this.nudDefaultTemp.Maximum = new decimal(new int[] {
+            2,
+            0,
+            0,
+            0});
             this.nudDefaultTemp.Name = "nudDefaultTemp";
             this.nudDefaultTemp.Size = new System.Drawing.Size(80, 21);
             this.nudDefaultTemp.TabIndex = 1;
@@ -127,14 +135,25 @@ namespace WordCopilotChat
             // 
             // nudDefaultMaxTokens
             // 
-            this.nudDefaultMaxTokens.Increment = new decimal(new int[] { 1000, 0, 0, 0 });
+            this.nudDefaultMaxTokens.Increment = new decimal(new int[] {
+            1000,
+            0,
+            0,
+            0});
             this.nudDefaultMaxTokens.Location = new System.Drawing.Point(170, 53);
-            this.nudDefaultMaxTokens.Maximum = new decimal(new int[] { 2147483647, 0, 0, 0 });
-            this.nudDefaultMaxTokens.Minimum = new decimal(new int[] { 1, 0, 0, 0 });
+            this.nudDefaultMaxTokens.Maximum = new decimal(new int[] {
+            2147483647,
+            0,
+            0,
+            0});
             this.nudDefaultMaxTokens.Name = "nudDefaultMaxTokens";
             this.nudDefaultMaxTokens.Size = new System.Drawing.Size(120, 21);
             this.nudDefaultMaxTokens.TabIndex = 3;
-            this.nudDefaultMaxTokens.Value = new decimal(new int[] { 1, 0, 0, 0 });
+            this.nudDefaultMaxTokens.Value = new decimal(new int[] {
+            1,
+            0,
+            0,
+            0});
             // 
             // lblDefaultTopP
             // 
@@ -148,9 +167,17 @@ namespace WordCopilotChat
             // nudDefaultTopP
             // 
             this.nudDefaultTopP.DecimalPlaces = 1;
-            this.nudDefaultTopP.Increment = new decimal(new int[] { 1, 0, 0, 65536 });
+            this.nudDefaultTopP.Increment = new decimal(new int[] {
+            1,
+            0,
+            0,
+            65536});
             this.nudDefaultTopP.Location = new System.Drawing.Point(170, 83);
-            this.nudDefaultTopP.Maximum = new decimal(new int[] { 1, 0, 0, 0 });
+            this.nudDefaultTopP.Maximum = new decimal(new int[] {
+            1,
+            0,
+            0,
+            0});
             this.nudDefaultTopP.Name = "nudDefaultTopP";
             this.nudDefaultTopP.Size = new System.Drawing.Size(80, 21);
             this.nudDefaultTopP.TabIndex = 5;
@@ -182,9 +209,17 @@ namespace WordCopilotChat
             // nudChatTemp
             // 
             this.nudChatTemp.DecimalPlaces = 1;
-            this.nudChatTemp.Increment = new decimal(new int[] { 1, 0, 0, 65536 });
+            this.nudChatTemp.Increment = new decimal(new int[] {
+            1,
+            0,
+            0,
+            65536});
             this.nudChatTemp.Location = new System.Drawing.Point(170, 23);
-            this.nudChatTemp.Maximum = new decimal(new int[] { 2, 0, 0, 0 });
+            this.nudChatTemp.Maximum = new decimal(new int[] {
+            2,
+            0,
+            0,
+            0});
             this.nudChatTemp.Name = "nudChatTemp";
             this.nudChatTemp.Size = new System.Drawing.Size(80, 21);
             this.nudChatTemp.TabIndex = 1;
@@ -200,14 +235,25 @@ namespace WordCopilotChat
             // 
             // nudChatMaxTokens
             // 
-            this.nudChatMaxTokens.Increment = new decimal(new int[] { 1000, 0, 0, 0 });
+            this.nudChatMaxTokens.Increment = new decimal(new int[] {
+            1000,
+            0,
+            0,
+            0});
             this.nudChatMaxTokens.Location = new System.Drawing.Point(170, 53);
-            this.nudChatMaxTokens.Maximum = new decimal(new int[] { 2147483647, 0, 0, 0 });
-            this.nudChatMaxTokens.Minimum = new decimal(new int[] { 1, 0, 0, 0 });
+            this.nudChatMaxTokens.Maximum = new decimal(new int[] {
+            2147483647,
+            0,
+            0,
+            0});
             this.nudChatMaxTokens.Name = "nudChatMaxTokens";
             this.nudChatMaxTokens.Size = new System.Drawing.Size(120, 21);
             this.nudChatMaxTokens.TabIndex = 3;
-            this.nudChatMaxTokens.Value = new decimal(new int[] { 1, 0, 0, 0 });
+            this.nudChatMaxTokens.Value = new decimal(new int[] {
+            1,
+            0,
+            0,
+            0});
             // 
             // lblChatTopP
             // 
@@ -221,9 +267,17 @@ namespace WordCopilotChat
             // nudChatTopP
             // 
             this.nudChatTopP.DecimalPlaces = 1;
-            this.nudChatTopP.Increment = new decimal(new int[] { 1, 0, 0, 65536 });
+            this.nudChatTopP.Increment = new decimal(new int[] {
+            1,
+            0,
+            0,
+            65536});
             this.nudChatTopP.Location = new System.Drawing.Point(170, 83);
-            this.nudChatTopP.Maximum = new decimal(new int[] { 1, 0, 0, 0 });
+            this.nudChatTopP.Maximum = new decimal(new int[] {
+            1,
+            0,
+            0,
+            0});
             this.nudChatTopP.Name = "nudChatTopP";
             this.nudChatTopP.Size = new System.Drawing.Size(80, 21);
             this.nudChatTopP.TabIndex = 5;
@@ -255,9 +309,17 @@ namespace WordCopilotChat
             // nudAgentTemp
             // 
             this.nudAgentTemp.DecimalPlaces = 1;
-            this.nudAgentTemp.Increment = new decimal(new int[] { 1, 0, 0, 65536 });
+            this.nudAgentTemp.Increment = new decimal(new int[] {
+            1,
+            0,
+            0,
+            65536});
             this.nudAgentTemp.Location = new System.Drawing.Point(170, 23);
-            this.nudAgentTemp.Maximum = new decimal(new int[] { 2, 0, 0, 0 });
+            this.nudAgentTemp.Maximum = new decimal(new int[] {
+            2,
+            0,
+            0,
+            0});
             this.nudAgentTemp.Name = "nudAgentTemp";
             this.nudAgentTemp.Size = new System.Drawing.Size(80, 21);
             this.nudAgentTemp.TabIndex = 1;
@@ -273,14 +335,25 @@ namespace WordCopilotChat
             // 
             // nudAgentMaxTokens
             // 
-            this.nudAgentMaxTokens.Increment = new decimal(new int[] { 1000, 0, 0, 0 });
+            this.nudAgentMaxTokens.Increment = new decimal(new int[] {
+            1000,
+            0,
+            0,
+            0});
             this.nudAgentMaxTokens.Location = new System.Drawing.Point(170, 53);
-            this.nudAgentMaxTokens.Maximum = new decimal(new int[] { 2147483647, 0, 0, 0 });
-            this.nudAgentMaxTokens.Minimum = new decimal(new int[] { 1, 0, 0, 0 });
+            this.nudAgentMaxTokens.Maximum = new decimal(new int[] {
+            2147483647,
+            0,
+            0,
+            0});
             this.nudAgentMaxTokens.Name = "nudAgentMaxTokens";
             this.nudAgentMaxTokens.Size = new System.Drawing.Size(120, 21);
             this.nudAgentMaxTokens.TabIndex = 3;
-            this.nudAgentMaxTokens.Value = new decimal(new int[] { 1, 0, 0, 0 });
+            this.nudAgentMaxTokens.Value = new decimal(new int[] {
+            1,
+            0,
+            0,
+            0});
             // 
             // lblAgentTopP
             // 
@@ -294,9 +367,17 @@ namespace WordCopilotChat
             // nudAgentTopP
             // 
             this.nudAgentTopP.DecimalPlaces = 1;
-            this.nudAgentTopP.Increment = new decimal(new int[] { 1, 0, 0, 65536 });
+            this.nudAgentTopP.Increment = new decimal(new int[] {
+            1,
+            0,
+            0,
+            65536});
             this.nudAgentTopP.Location = new System.Drawing.Point(170, 83);
-            this.nudAgentTopP.Maximum = new decimal(new int[] { 1, 0, 0, 0 });
+            this.nudAgentTopP.Maximum = new decimal(new int[] {
+            1,
+            0,
+            0,
+            0});
             this.nudAgentTopP.Name = "nudAgentTopP";
             this.nudAgentTopP.Size = new System.Drawing.Size(80, 21);
             this.nudAgentTopP.TabIndex = 5;

@@ -12,7 +12,7 @@ namespace WordCopilotChat.services
     public class AppSettingsService
     {
         private readonly IFreeSql _freeSql;
-        
+
         // 静态缓存，避免频繁数据库查询
         private static Dictionary<string, string> _settingsCache = new Dictionary<string, string>();
         private static readonly object _lockObject = new object();
@@ -31,13 +31,13 @@ namespace WordCopilotChat.services
             {
                 // 确保表存在
                 _freeSql.CodeFirst.SyncStructure<AppSettings>();
-                
+
                 // 初始化默认设置
                 InitializeDefaultSettings();
-                
+
                 // 加载设置到缓存
                 LoadSettingsToCache();
-                
+
                 System.Diagnostics.Debug.WriteLine("应用设置表初始化完成");
             }
             catch (Exception ex)
@@ -59,7 +59,7 @@ namespace WordCopilotChat.services
                     {
                         SettingKey = "default_temperature",
                         SettingValue = "0.7",
-                        Description = "默认温度参数（创造性）",
+                        Description = "默认温度参数",
                         DataType = "double",
                         CreatedAt = DateTime.Now,
                         UpdatedAt = DateTime.Now
@@ -67,8 +67,8 @@ namespace WordCopilotChat.services
                     new AppSettings
                     {
                         SettingKey = "default_max_tokens",
-                        SettingValue = "4000",
-                        Description = "默认最大令牌数",
+                        SettingValue = "",
+                        Description = "默认最大令牌数（空则由服务商自动处理）",
                         DataType = "int",
                         CreatedAt = DateTime.Now,
                         UpdatedAt = DateTime.Now
@@ -77,7 +77,7 @@ namespace WordCopilotChat.services
                     {
                         SettingKey = "default_top_p",
                         SettingValue = "0.9",
-                        Description = "默认Top-P参数（多样性）",
+                        Description = "默认Top-P参数",
                         DataType = "double",
                         CreatedAt = DateTime.Now,
                         UpdatedAt = DateTime.Now
@@ -85,8 +85,8 @@ namespace WordCopilotChat.services
                     new AppSettings
                     {
                         SettingKey = "chat_temperature",
-                        SettingValue = "0.5",
-                        Description = "Chat模式温度参数",
+                        SettingValue = "0.7",
+                        Description = "Chat模式温度参数（创意写作）",
                         DataType = "double",
                         CreatedAt = DateTime.Now,
                         UpdatedAt = DateTime.Now
@@ -94,8 +94,8 @@ namespace WordCopilotChat.services
                     new AppSettings
                     {
                         SettingKey = "chat_max_tokens",
-                        SettingValue = "2048",
-                        Description = "Chat模式最大令牌数",
+                        SettingValue = "",
+                        Description = "Chat模式最大令牌数（空则由服务商自动处理）",
                         DataType = "int",
                         CreatedAt = DateTime.Now,
                         UpdatedAt = DateTime.Now
@@ -103,7 +103,7 @@ namespace WordCopilotChat.services
                     new AppSettings
                     {
                         SettingKey = "chat_top_p",
-                        SettingValue = "0.8",
+                        SettingValue = "0.9",
                         Description = "Chat模式Top-P参数",
                         DataType = "double",
                         CreatedAt = DateTime.Now,
@@ -112,8 +112,8 @@ namespace WordCopilotChat.services
                     new AppSettings
                     {
                         SettingKey = "agent_temperature",
-                        SettingValue = "0.7",
-                        Description = "Agent模式温度参数",
+                        SettingValue = "0.3",
+                        Description = "Agent模式温度参数（严格工具调用）",
                         DataType = "double",
                         CreatedAt = DateTime.Now,
                         UpdatedAt = DateTime.Now
@@ -121,8 +121,8 @@ namespace WordCopilotChat.services
                     new AppSettings
                     {
                         SettingKey = "agent_max_tokens",
-                        SettingValue = "8192",
-                        Description = "Agent模式最大令牌数",
+                        SettingValue = "",
+                        Description = "Agent模式最大令牌数（空则由服务商自动处理）",
                         DataType = "int",
                         CreatedAt = DateTime.Now,
                         UpdatedAt = DateTime.Now
@@ -130,8 +130,8 @@ namespace WordCopilotChat.services
                     new AppSettings
                     {
                         SettingKey = "agent_top_p",
-                        SettingValue = "0.9",
-                        Description = "Agent模式Top-P参数",
+                        SettingValue = "0.85",
+                        Description = "Agent模式Top-P参数（略保守）",
                         DataType = "double",
                         CreatedAt = DateTime.Now,
                         UpdatedAt = DateTime.Now
@@ -144,7 +144,7 @@ namespace WordCopilotChat.services
                     var existing = _freeSql.Select<AppSettings>()
                         .Where(s => s.SettingKey == setting.SettingKey)
                         .First();
-                        
+
                     if (existing == null)
                     {
                         _freeSql.Insert(setting).ExecuteAffrows();
@@ -169,12 +169,12 @@ namespace WordCopilotChat.services
                 {
                     _settingsCache.Clear();
                     var settings = _freeSql.Select<AppSettings>().ToList();
-                    
+
                     foreach (var setting in settings)
                     {
                         _settingsCache[setting.SettingKey] = setting.SettingValue;
                     }
-                    
+
                     System.Diagnostics.Debug.WriteLine($"已加载 {_settingsCache.Count} 个应用设置到缓存");
                 }
             }
@@ -193,6 +193,17 @@ namespace WordCopilotChat.services
             {
                 return _settingsCache.TryGetValue(key, out var value) ? value : defaultValue;
             }
+        }
+
+        /// <summary>
+        /// 获取整数设置值（支持可选值，空字符串返回null）
+        /// </summary>
+        public int? GetIntSettingNullable(string key)
+        {
+            var value = GetSetting(key);
+            if (string.IsNullOrWhiteSpace(value))
+                return null;
+            return int.TryParse(value, out var result) ? result : (int?)null;
         }
 
         /// <summary>
@@ -237,7 +248,7 @@ namespace WordCopilotChat.services
                 {
                     setting.SettingValue = value;
                     setting.UpdatedAt = DateTime.Now;
-                    
+
                     var updated = _freeSql.Update<AppSettings>()
                         .Set(s => s.SettingValue, value)
                         .Set(s => s.UpdatedAt, DateTime.Now)
@@ -254,7 +265,7 @@ namespace WordCopilotChat.services
                         return true;
                     }
                 }
-                
+
                 return false;
             }
             catch (Exception ex)
@@ -283,36 +294,36 @@ namespace WordCopilotChat.services
         }
 
         /// <summary>
-        /// 获取AI参数的默认值
+        /// 获取AI参数的默认值（max_tokens可为null）
         /// </summary>
-        public (double temperature, int maxTokens, double topP) GetDefaultAIParameters()
+        public (double temperature, int? maxTokens, double topP) GetDefaultAIParameters()
         {
             return (
                 GetDoubleSetting("default_temperature", 0.7),
-                GetIntSetting("default_max_tokens", 4000),
+                GetIntSettingNullable("default_max_tokens"),
                 GetDoubleSetting("default_top_p", 0.9)
             );
         }
 
         /// <summary>
-        /// 根据聊天模式获取AI参数
+        /// 根据聊天模式获取AI参数（max_tokens可为null）
         /// </summary>
-        public (double temperature, int maxTokens, double topP) GetAIParametersByMode(string chatMode)
+        public (double temperature, int? maxTokens, double topP) GetAIParametersByMode(string chatMode)
         {
             if (chatMode == "chat-agent")
             {
                 return (
-                    GetDoubleSetting("agent_temperature", 0.7),
-                    GetIntSetting("agent_max_tokens", 8192),
-                    GetDoubleSetting("agent_top_p", 0.9)
+                    GetDoubleSetting("agent_temperature", 0.3),
+                    GetIntSettingNullable("agent_max_tokens"),
+                    GetDoubleSetting("agent_top_p", 0.85)
                 );
             }
             else
             {
                 return (
-                    GetDoubleSetting("chat_temperature", 0.5),
-                    GetIntSetting("chat_max_tokens", 2048),
-                    GetDoubleSetting("chat_top_p", 0.8)
+                    GetDoubleSetting("chat_temperature", 0.7),
+                    GetIntSettingNullable("chat_max_tokens"),
+                    GetDoubleSetting("chat_top_p", 0.9)
                 );
             }
         }
