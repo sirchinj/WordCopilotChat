@@ -37,5 +37,13 @@ namespace WordCopilotChat.models
         [Column(Name = "model_type")] // 1:chat,2:embedding
         public int modelType { get; set; }
 
+        /// <summary>
+        /// 模型的上下文窗口长度（单位：k tokens）
+        /// 例如：128表示128k tokens，即约131072 tokens
+        /// 用于自动压缩对话历史的判断
+        /// 如果为0或null，则不启用自动压缩功能
+        /// </summary>
+        [Column(Name = "context_length")]
+        public int? ContextLength { get; set; }
     }
 }

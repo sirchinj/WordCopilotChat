@@ -198,14 +198,15 @@ namespace WordCopilotChat
                 // 如果没有找到标题，给出提示
                 if (_parsedHeadings.Count == 0)
                 {
-                    labelParseResult.Text = "未找到标题！请确保文档使用了标准的标题样式。";
+                    labelParseResult.Text = "未找到标题！请确保文档有明显的标题格式。";
                     labelParseResult.ForeColor = Color.Orange;
                     LogParseProgress("警告：未找到任何标题！");
                     
-                    MessageBox.Show("未在文档中找到标题！\n\n请确保：\n" +
-                                  "• Word文档使用了标题样式（标题1、标题2等）\n" +
-                                  "• Markdown文档使用了标题标记（#、##等）\n" +
-                                  "• 文档内容不为空", 
+                    MessageBox.Show("未在文档中找到标题！\n\n系统会尝试以下方式识别标题：\n" +
+                                  "1. Word标题样式（标题1、标题2等）\n" +
+                                  "2. 字体较大的文本（比正文大1.5磅以上）\n" +
+                                  "3. Markdown标题标记（#、##等）\n\n" +
+                                  "请确保文档中的标题有明显的格式特征。", 
                                   "解析结果", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
             }
@@ -321,6 +322,21 @@ namespace WordCopilotChat
         }
 
         // 右键菜单事件处理
+        private void toolStripMenuItemViewContent_Click(object sender, EventArgs e)
+        {
+            if (listViewHeadings.SelectedItems.Count == 0)
+            {
+                MessageBox.Show("请先选择一个标题！", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            
+            var selectedItem = listViewHeadings.SelectedItems[0];
+            if (selectedItem.Tag is DocumentHeading heading)
+            {
+                ShowHeadingContent(heading);
+            }
+        }
+        
         private void toolStripMenuItemRemove_Click(object sender, EventArgs e)
         {
             RemoveSelectedHeadings();
@@ -339,6 +355,19 @@ namespace WordCopilotChat
             foreach (ListViewItem item in listViewHeadings.Items)
             {
                 item.Selected = false;
+            }
+        }
+        
+        // 双击标题查看内容
+        private void listViewHeadings_DoubleClick(object sender, EventArgs e)
+        {
+            if (listViewHeadings.SelectedItems.Count == 0)
+                return;
+            
+            var selectedItem = listViewHeadings.SelectedItems[0];
+            if (selectedItem.Tag is DocumentHeading heading)
+            {
+                ShowHeadingContent(heading);
             }
         }
 
@@ -551,6 +580,66 @@ namespace WordCopilotChat
         private string GetLevelIndent(int level)
         {
             return new string(' ', (level - 1) * 4);
+        }
+        
+        /// <summary>
+        /// 显示标题内容
+        /// </summary>
+        private void ShowHeadingContent(DocumentHeading heading)
+        {
+            if (heading == null) return;
+            
+            string content = heading.Content ?? "(无内容)";
+            
+            // 创建一个新窗体显示内容
+            var contentForm = new Form
+            {
+                Text = $"标题内容 - {heading.HeadingText}",
+                Size = new Size(800, 600),
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.Sizable
+            };
+            
+            var textBox = new TextBox
+            {
+                Multiline = true,
+                Dock = DockStyle.Fill,
+                ScrollBars = ScrollBars.Both,
+                ReadOnly = true,
+                Text = content,
+                Font = new Font("Consolas", 9F)
+            };
+            
+            var panel = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 40
+            };
+            
+            var btnClose = new Button
+            {
+                Text = "关闭",
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+                Location = new Point(700, 8),
+                Size = new Size(80, 25)
+            };
+            btnClose.Click += (s, e) => contentForm.Close();
+            
+            var lblInfo = new Label
+            {
+                Text = $"级别: H{heading.HeadingLevel}  |  内容长度: {content.Length} 字符  |  (双击标题可查看内容)",
+                AutoSize = false,
+                Size = new Size(680, 25),
+                Location = new Point(10, 10),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            
+            panel.Controls.Add(btnClose);
+            panel.Controls.Add(lblInfo);
+            contentForm.Controls.Add(textBox);
+            contentForm.Controls.Add(panel);
+            
+            contentForm.ShowDialog(this);
         }
 
         #endregion

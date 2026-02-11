@@ -45,6 +45,7 @@ namespace WordCopilotChat
             this.columnHeaderLevel = new System.Windows.Forms.ColumnHeader();
             this.columnHeaderContentLength = new System.Windows.Forms.ColumnHeader();
             this.contextMenuStripHeadings = new System.Windows.Forms.ContextMenuStrip();
+            this.toolStripMenuItemViewContent = new System.Windows.Forms.ToolStripMenuItem();
             this.toolStripMenuItemRemove = new System.Windows.Forms.ToolStripMenuItem();
             this.toolStripSeparator1 = new System.Windows.Forms.ToolStripSeparator();
             this.toolStripMenuItemSelectAll = new System.Windows.Forms.ToolStripMenuItem();
@@ -168,7 +169,7 @@ namespace WordCopilotChat
             this.labelParseInfo.Name = "labelParseInfo";
             this.labelParseInfo.Size = new System.Drawing.Size(365, 12);
             this.labelParseInfo.TabIndex = 0;
-            this.labelParseInfo.Text = "点击解析文档，系统将自动提取文档中的标题和内容，只有包含标题的文档才能上传。";
+            this.labelParseInfo.Text = "点击解析文档，系统将自动提取文档中的标题和内容（支持标题样式和大字体识别）。";
             // 
             // groupBoxHeadings
             // 
@@ -178,7 +179,7 @@ namespace WordCopilotChat
             this.groupBoxHeadings.Size = new System.Drawing.Size(660, 280);
             this.groupBoxHeadings.TabIndex = 2;
             this.groupBoxHeadings.TabStop = false;
-            this.groupBoxHeadings.Text = "3. 预览文档结构（右键可剔除不需要的标题）";
+            this.groupBoxHeadings.Text = "3. 预览文档结构（双击查看内容，右键可剔除标题）";
             // 
             // listViewHeadings
             // 
@@ -195,6 +196,7 @@ namespace WordCopilotChat
             this.listViewHeadings.TabIndex = 0;
             this.listViewHeadings.UseCompatibleStateImageBehavior = false;
             this.listViewHeadings.View = System.Windows.Forms.View.Details;
+            this.listViewHeadings.DoubleClick += new System.EventHandler(this.listViewHeadings_DoubleClick);
             // 
             // columnHeaderHeading
             // 
@@ -236,12 +238,20 @@ namespace WordCopilotChat
             // contextMenuStripHeadings
             // 
             this.contextMenuStripHeadings.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.toolStripMenuItemViewContent,
             this.toolStripMenuItemRemove,
             this.toolStripSeparator1,
             this.toolStripMenuItemSelectAll,
             this.toolStripMenuItemUnselectAll});
             this.contextMenuStripHeadings.Name = "contextMenuStripHeadings";
-            this.contextMenuStripHeadings.Size = new System.Drawing.Size(149, 76);
+            this.contextMenuStripHeadings.Size = new System.Drawing.Size(149, 98);
+            // 
+            // toolStripMenuItemViewContent
+            // 
+            this.toolStripMenuItemViewContent.Name = "toolStripMenuItemViewContent";
+            this.toolStripMenuItemViewContent.Size = new System.Drawing.Size(148, 22);
+            this.toolStripMenuItemViewContent.Text = "查看内容";
+            this.toolStripMenuItemViewContent.Click += new System.EventHandler(this.toolStripMenuItemViewContent_Click);
             // 
             // toolStripMenuItemRemove
             // 
@@ -319,6 +329,7 @@ namespace WordCopilotChat
         private System.Windows.Forms.Button buttonCancel;
         private System.Windows.Forms.TextBox textBoxParseLog;
         private System.Windows.Forms.ContextMenuStrip contextMenuStripHeadings;
+        private System.Windows.Forms.ToolStripMenuItem toolStripMenuItemViewContent;
         private System.Windows.Forms.ToolStripMenuItem toolStripMenuItemRemove;
         private System.Windows.Forms.ToolStripSeparator toolStripSeparator1;
         private System.Windows.Forms.ToolStripMenuItem toolStripMenuItemSelectAll;

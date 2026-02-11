@@ -1761,33 +1761,53 @@ namespace WordCopilotChat.utils
                         true   // SaveWithDocument
                     );
                     
-                    // 设置图片尺寸（转换为磅）
-                    // 1像素 ≈ 0.75磅
-                    double widthPoints = width * 0.75;
-                    double heightPoints = height * 0.75;
-                    
-                    // 限制最大尺寸
-                    const double maxWidth = 400; // 最大宽度400磅
-                    const double maxHeight = 300; // 最大高度300磅
-                    
-                    if (widthPoints > maxWidth)
-                    {
-                        double scale = maxWidth / widthPoints;
-                        widthPoints = maxWidth;
-                        heightPoints = heightPoints * scale;
-                    }
-                    
-                    if (heightPoints > maxHeight)
-                    {
-                        double scale = maxHeight / heightPoints;
-                        heightPoints = maxHeight;
-                        widthPoints = widthPoints * scale;
-                    }
-                    
-                    inlineShape.Width = widthPoints;
-                    inlineShape.Height = heightPoints;
-                    
-                    Debug.WriteLine($"图片插入成功，尺寸: {widthPoints}x{heightPoints}磅");
+                // 设置图片尺寸：默认“适配页面可用宽度”，避免侧边栏预览较小导致插入后看不清
+                // width/height 作为比例参考即可（不再直接按像素->磅）
+                double aspect = 0.75;
+                if (width > 0 && height > 0)
+                {
+                    aspect = (double)height / (double)width;
+                }
+
+                double availableWidth = 400;  // 兜底
+                double availableHeight = 600; // 兜底
+                try
+                {
+                    availableWidth = (double)doc.PageSetup.PageWidth - (double)doc.PageSetup.LeftMargin - (double)doc.PageSetup.RightMargin;
+                    availableHeight = (double)doc.PageSetup.PageHeight - (double)doc.PageSetup.TopMargin - (double)doc.PageSetup.BottomMargin;
+                }
+                catch (Exception psEx)
+                {
+                    Debug.WriteLine($"获取页面可用宽高失败，使用兜底值: {psEx.Message}");
+                }
+
+                // 目标：尽量铺满页面宽度；高度过高则按高度上限回缩
+                double targetWidth = Math.Max(240, availableWidth * 0.95);
+                double maxHeight = Math.Max(240, availableHeight * 0.70);
+                double targetHeight = targetWidth * aspect;
+                if (targetHeight > maxHeight)
+                {
+                    targetHeight = maxHeight;
+                    targetWidth = targetHeight / aspect;
+                }
+
+                try
+                {
+                    inlineShape.LockAspectRatio = true;
+                }
+                catch { }
+
+                inlineShape.Width = targetWidth;
+                inlineShape.Height = targetHeight;
+
+                // 居中显示（不影响文档其它段落）
+                try
+                {
+                    inlineShape.Range.ParagraphFormat.Alignment = 1; // wdAlignParagraphCenter
+                }
+                catch { }
+
+                Debug.WriteLine($"图片插入成功，尺寸: {targetWidth}x{targetHeight}磅（适配页面宽度）");
                     
                     // 图片插入后移动光标到图片后面
                     selection.MoveRight(1, 1);
@@ -1894,32 +1914,50 @@ namespace WordCopilotChat.utils
                             true   // SaveWithDocument
                         );
                         
-                        // 设置图片尺寸（转换为磅）
-                        double widthPoints = width * 0.75;
-                        double heightPoints = height * 0.75;
-                        
-                        // 限制最大尺寸
-                        const double maxWidth = 400;
-                        const double maxHeight = 300;
-                        
-                        if (widthPoints > maxWidth)
+                        // 设置图片尺寸：同 PNG，默认适配页面可用宽度（矢量可无损缩放）
+                        double aspect = 0.75;
+                        if (width > 0 && height > 0)
                         {
-                            double scale = maxWidth / widthPoints;
-                            widthPoints = maxWidth;
-                            heightPoints = heightPoints * scale;
+                            aspect = (double)height / (double)width;
                         }
-                        
-                        if (heightPoints > maxHeight)
+
+                        double availableWidth = 400;  // 兜底
+                        double availableHeight = 600; // 兜底
+                        try
                         {
-                            double scale = maxHeight / heightPoints;
-                            heightPoints = maxHeight;
-                            widthPoints = widthPoints * scale;
+                            availableWidth = (double)doc.PageSetup.PageWidth - (double)doc.PageSetup.LeftMargin - (double)doc.PageSetup.RightMargin;
+                            availableHeight = (double)doc.PageSetup.PageHeight - (double)doc.PageSetup.TopMargin - (double)doc.PageSetup.BottomMargin;
                         }
-                        
-                        inlineShape.Width = widthPoints;
-                        inlineShape.Height = heightPoints;
-                        
-                        Debug.WriteLine($"SVG图片插入成功，尺寸: {widthPoints}x{heightPoints}磅");
+                        catch (Exception psEx)
+                        {
+                            Debug.WriteLine($"获取页面可用宽高失败，使用兜底值: {psEx.Message}");
+                        }
+
+                        double targetWidth = Math.Max(240, availableWidth * 0.95);
+                        double maxHeight = Math.Max(240, availableHeight * 0.70);
+                        double targetHeight = targetWidth * aspect;
+                        if (targetHeight > maxHeight)
+                        {
+                            targetHeight = maxHeight;
+                            targetWidth = targetHeight / aspect;
+                        }
+
+                        try
+                        {
+                            inlineShape.LockAspectRatio = true;
+                        }
+                        catch { }
+
+                        inlineShape.Width = targetWidth;
+                        inlineShape.Height = targetHeight;
+
+                        try
+                        {
+                            inlineShape.Range.ParagraphFormat.Alignment = 1; // wdAlignParagraphCenter
+                        }
+                        catch { }
+
+                        Debug.WriteLine($"SVG图片插入成功，尺寸: {targetWidth}x{targetHeight}磅（适配页面宽度）");
                         
                         // 图片插入后移动光标到图片后面
                         selection.MoveRight(1, 1);

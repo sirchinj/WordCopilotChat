@@ -135,6 +135,15 @@ namespace WordCopilotChat.services
                         DataType = "double",
                         CreatedAt = DateTime.Now,
                         UpdatedAt = DateTime.Now
+                    },
+                    new AppSettings
+                    {
+                        SettingKey = "context_compress_threshold_pct",
+                        SettingValue = "90",
+                        Description = "自动压缩对话阈值（百分比，输入Token占max_tokens达到该比例时触发压缩）",
+                        DataType = "int",
+                        CreatedAt = DateTime.Now,
+                        UpdatedAt = DateTime.Now
                     }
                 };
 

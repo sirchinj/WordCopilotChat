@@ -25,6 +25,9 @@ namespace WordCopilotChat
         private System.Windows.Forms.Label lblTemplateDesc;
         private System.Windows.Forms.Label lblModelType;
         private System.Windows.Forms.Label lblModelSupport;
+        private System.Windows.Forms.Label lblContextLength;
+        private System.Windows.Forms.NumericUpDown numContextLength;
+        private System.Windows.Forms.Label lblContextLengthDesc;
         private System.Windows.Forms.Label lblParameters;
         private System.Windows.Forms.Label lblParamDesc;
 
@@ -68,8 +71,12 @@ namespace WordCopilotChat
             this.lblTemplateDesc = new System.Windows.Forms.Label();
             this.lblModelType = new System.Windows.Forms.Label();
             this.lblModelSupport = new System.Windows.Forms.Label();
+            this.lblContextLength = new System.Windows.Forms.Label();
+            this.numContextLength = new System.Windows.Forms.NumericUpDown();
+            this.lblContextLengthDesc = new System.Windows.Forms.Label();
             this.lblParameters = new System.Windows.Forms.Label();
             this.lblParamDesc = new System.Windows.Forms.Label();
+            ((System.ComponentModel.ISupportInitialize)(this.numContextLength)).BeginInit();
             this.SuspendLayout();
             // 
             // txtNickName
@@ -159,10 +166,11 @@ namespace WordCopilotChat
             this.chkThink.TabIndex = 8;
             this.chkThink.Text = "深度思考";
             this.chkThink.UseVisualStyleBackColor = true;
+            this.chkThink.Visible = false;
             // 
             // txtParameters
             // 
-            this.txtParameters.Location = new System.Drawing.Point(110, 250);
+            this.txtParameters.Location = new System.Drawing.Point(110, 280);
             this.txtParameters.Multiline = true;
             this.txtParameters.Name = "txtParameters";
             this.txtParameters.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
@@ -172,7 +180,7 @@ namespace WordCopilotChat
             // 
             // btnSave
             // 
-            this.btnSave.Location = new System.Drawing.Point(200, 420);
+            this.btnSave.Location = new System.Drawing.Point(200, 450);
             this.btnSave.Name = "btnSave";
             this.btnSave.Size = new System.Drawing.Size(80, 35);
             this.btnSave.TabIndex = 10;
@@ -182,7 +190,7 @@ namespace WordCopilotChat
             // 
             // btnCancel
             // 
-            this.btnCancel.Location = new System.Drawing.Point(300, 420);
+            this.btnCancel.Location = new System.Drawing.Point(300, 450);
             this.btnCancel.Name = "btnCancel";
             this.btnCancel.Size = new System.Drawing.Size(80, 35);
             this.btnCancel.TabIndex = 11;
@@ -254,10 +262,46 @@ namespace WordCopilotChat
             this.lblModelSupport.TabIndex = 18;
             this.lblModelSupport.Text = "模型支持:";
             // 
+            // lblContextLength
+            // 
+            this.lblContextLength.AutoSize = true;
+            this.lblContextLength.Location = new System.Drawing.Point(20, 248);
+            this.lblContextLength.Name = "lblContextLength";
+            this.lblContextLength.Size = new System.Drawing.Size(71, 12);
+            this.lblContextLength.TabIndex = 21;
+            this.lblContextLength.Text = "上下文长度:";
+            // 
+            // numContextLength
+            // 
+            this.numContextLength.Location = new System.Drawing.Point(110, 245);
+            this.numContextLength.Maximum = new decimal(new int[] {
+            1000,
+            0,
+            0,
+            0});
+            this.numContextLength.Name = "numContextLength";
+            this.numContextLength.Size = new System.Drawing.Size(100, 21);
+            this.numContextLength.TabIndex = 22;
+            this.numContextLength.Value = new decimal(new int[] {
+            128,
+            0,
+            0,
+            0});
+            // 
+            // lblContextLengthDesc
+            // 
+            this.lblContextLengthDesc.AutoSize = true;
+            this.lblContextLengthDesc.ForeColor = System.Drawing.Color.Gray;
+            this.lblContextLengthDesc.Location = new System.Drawing.Point(220, 248);
+            this.lblContextLengthDesc.Name = "lblContextLengthDesc";
+            this.lblContextLengthDesc.Size = new System.Drawing.Size(281, 12);
+            this.lblContextLengthDesc.TabIndex = 23;
+            this.lblContextLengthDesc.Text = "单位：k（例如128表示128k tokens，0表示不限制）";
+            // 
             // lblParameters
             // 
             this.lblParameters.AutoSize = true;
-            this.lblParameters.Location = new System.Drawing.Point(20, 253);
+            this.lblParameters.Location = new System.Drawing.Point(20, 283);
             this.lblParameters.Name = "lblParameters";
             this.lblParameters.Size = new System.Drawing.Size(59, 12);
             this.lblParameters.TabIndex = 19;
@@ -267,7 +311,7 @@ namespace WordCopilotChat
             // 
             this.lblParamDesc.AutoSize = true;
             this.lblParamDesc.ForeColor = System.Drawing.Color.Gray;
-            this.lblParamDesc.Location = new System.Drawing.Point(110, 380);
+            this.lblParamDesc.Location = new System.Drawing.Point(110, 410);
             this.lblParamDesc.Name = "lblParamDesc";
             this.lblParamDesc.Size = new System.Drawing.Size(209, 12);
             this.lblParamDesc.TabIndex = 20;
@@ -277,7 +321,10 @@ namespace WordCopilotChat
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(500, 480);
+            this.ClientSize = new System.Drawing.Size(500, 510);
+            this.Controls.Add(this.lblContextLengthDesc);
+            this.Controls.Add(this.numContextLength);
+            this.Controls.Add(this.lblContextLength);
             this.Controls.Add(this.lblParamDesc);
             this.Controls.Add(this.lblParameters);
             this.Controls.Add(this.lblModelSupport);
@@ -305,6 +352,7 @@ namespace WordCopilotChat
             this.Name = "AddModelForm";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
             this.Text = "模型编辑";
+            ((System.ComponentModel.ISupportInitialize)(this.numContextLength)).EndInit();
             this.ResumeLayout(false);
             this.PerformLayout();
 

@@ -12,6 +12,7 @@ using System.Threading;
 using System.IO;
 
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace WordCopilot.utils
 {
@@ -76,8 +77,18 @@ namespace WordCopilot.utils
         // 工具调用进度事件
         public static event Action<string> OnToolProgress;
 
+        // 用量(usage)事件：用于前端展示 token 使用情况
+        // 事件参数为一个 JSON 对象，包含 usage/max_tokens/remaining_tokens 等字段
+        public static event Action<JObject> OnUsageReady;
+
         // 全局日志开关（默认关闭，节省磁盘）：仅当为 true 时才写入 openai_requests / openai_errors 日志
-        public static bool EnableLogging { get; set; } = false;
+        // 注意：OpenAI 请求通常在后台线程执行；此开关需要保证跨线程的可见性，避免出现“勾选后仍不生效”的情况
+        private static volatile bool _enableLogging = false;
+        public static bool EnableLogging
+        {
+            get { return _enableLogging; }
+            set { _enableLogging = value; }
+        }
 
         // 用户数据根目录：C:\Users\<User>\.WordCopilotChat
         private static string GetUserDataRoot()
@@ -151,10 +162,260 @@ namespace WordCopilot.utils
             }
         }
 
+        /// <summary>
+        /// 将请求中的思维链从 content 中剥离：发送给模型只保留正文；日志中把思维链放到 think 字段
+        /// </summary>
+        private static (JObject sendBody, JObject logBody) PrepareSendAndLogBodies(JObject requestBody)
+        {
+            // 深拷贝，避免影响调用方对象
+            var logBody = JObject.Parse((requestBody ?? new JObject()).ToString(Formatting.None));
+            var sendBody = JObject.Parse((requestBody ?? new JObject()).ToString(Formatting.None));
+
+            var logMessages = logBody["messages"] as JArray;
+            var sendMessages = sendBody["messages"] as JArray;
+            if (logMessages == null || sendMessages == null) return (sendBody, logBody);
+
+            int n = Math.Min(logMessages.Count, sendMessages.Count);
+            for (int i = 0; i < n; i++)
+            {
+                var logMsg = logMessages[i] as JObject;
+                var sendMsg = sendMessages[i] as JObject;
+                if (logMsg == null || sendMsg == null) continue;
+
+                // 发送侧：永远不带 think 字段
+                sendMsg.Remove("think");
+
+                // 兼容：若调用方已经带了 think，则日志保留；并将 content 内的 <think> 继续剥离合并
+                string existingThink = logMsg["think"]?.ToString() ?? "";
+
+                // content 可能是 string 或 multimodal array
+                if (logMsg["content"]?.Type == JTokenType.String)
+                {
+                    string content = logMsg["content"]?.ToString() ?? "";
+                    var (cleaned, extractedThink) = SplitThinkFromContent(content);
+                    string mergedThink = MergeThink(existingThink, extractedThink);
+
+                    logMsg["content"] = cleaned;
+                    sendMsg["content"] = cleaned;
+
+                    // 日志侧：如果有 think，单独存放
+                    if (!string.IsNullOrWhiteSpace(mergedThink))
+                        logMsg["think"] = mergedThink;
+                    else
+                        logMsg.Remove("think");
+                }
+                else if (logMsg["content"]?.Type == JTokenType.Array)
+                {
+                    // 多模态：只清理其中 type=text 的文本片段
+                    var logArr = logMsg["content"] as JArray;
+                    var sendArr = sendMsg["content"] as JArray;
+                    if (logArr != null && sendArr != null)
+                    {
+                        var thinkParts = new List<string>();
+                        if (!string.IsNullOrWhiteSpace(existingThink)) thinkParts.Add(existingThink.Trim());
+
+                        int m = Math.Min(logArr.Count, sendArr.Count);
+                        for (int j = 0; j < m; j++)
+                        {
+                            var logItem = logArr[j] as JObject;
+                            var sendItem = sendArr[j] as JObject;
+                            if (logItem == null || sendItem == null) continue;
+
+                            if (string.Equals(logItem["type"]?.ToString(), "text", StringComparison.OrdinalIgnoreCase))
+                            {
+                                string text = logItem["text"]?.ToString() ?? "";
+                                var (cleaned, extractedThink) = SplitThinkFromContent(text);
+                                if (!string.IsNullOrWhiteSpace(extractedThink)) thinkParts.Add(extractedThink.Trim());
+                                logItem["text"] = cleaned;
+                                sendItem["text"] = cleaned;
+                            }
+                        }
+
+                        string merged = string.Join("\n\n", thinkParts.Where(x => !string.IsNullOrWhiteSpace(x)));
+                        if (!string.IsNullOrWhiteSpace(merged))
+                            logMsg["think"] = merged.Trim();
+                        else
+                            logMsg.Remove("think");
+                    }
+                }
+                else
+                {
+                    // 非预期类型：至少确保发送侧不包含 think 字段
+                    if (!string.IsNullOrWhiteSpace(existingThink))
+                        logMsg["think"] = existingThink.Trim();
+                }
+            }
+
+            return (sendBody, logBody);
+        }
+
+        private static string MergeThink(string a, string b)
+        {
+            a = (a ?? "").Trim();
+            b = (b ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(a)) return b;
+            if (string.IsNullOrWhiteSpace(b)) return a;
+            return a + "\n\n" + b;
+        }
+
+        private static (string cleaned, string think) SplitThinkFromContent(string raw)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(raw)) return ("", "");
+
+                var thinkParts = new List<string>();
+                foreach (Match m in Regex.Matches(raw, @"<think>([\s\S]*?)</think>", RegexOptions.IgnoreCase))
+                {
+                    if (m.Success && m.Groups.Count > 1)
+                    {
+                        var t = m.Groups[1]?.Value;
+                        if (!string.IsNullOrWhiteSpace(t)) thinkParts.Add(t.Trim());
+                    }
+                }
+
+                string cleaned = Regex.Replace(raw, @"<think>[\s\S]*?</think>", "", RegexOptions.IgnoreCase);
+
+                int openIdx = cleaned.IndexOf("<think>", StringComparison.OrdinalIgnoreCase);
+                if (openIdx >= 0)
+                {
+                    string after = cleaned.Substring(openIdx + "<think>".Length);
+                    if (!string.IsNullOrWhiteSpace(after)) thinkParts.Add(after.Trim());
+                    cleaned = cleaned.Substring(0, openIdx);
+                }
+
+                cleaned = Regex.Replace(cleaned, @"</think>", "", RegexOptions.IgnoreCase);
+                return ((cleaned ?? "").Trim(), string.Join("\n\n", thinkParts.Where(x => !string.IsNullOrWhiteSpace(x))).Trim());
+            }
+            catch
+            {
+                return ((raw ?? "").Trim(), "");
+            }
+        }
+
         // 触发工具进度事件的公共方法
         public static void NotifyToolProgress(string message)
         {
             OnToolProgress?.Invoke(message);
+        }
+
+        // 触发 usage 事件（统一封装）
+        private static void NotifyUsage(JObject usage, int? maxTokens, bool estimated = false)
+        {
+            try
+            {
+                if (usage == null) return;
+
+                int? promptTokens = usage["prompt_tokens"]?.ToObject<int?>();
+                int? completionTokens = usage["completion_tokens"]?.ToObject<int?>();
+                int? totalTokens = usage["total_tokens"]?.ToObject<int?>();
+
+                // 部分兼容 OpenAI 的服务商不返回 total_tokens，这里做一个兼容兜底
+                if (!totalTokens.HasValue && (promptTokens.HasValue || completionTokens.HasValue))
+                {
+                    totalTokens = (promptTokens ?? 0) + (completionTokens ?? 0);
+                }
+
+                // “已用”用于 max_tokens 的扣减，优先用 completion_tokens（更符合 max_tokens 语义）
+                int? usedForMax = completionTokens ?? totalTokens;
+
+                int? remaining = null;
+                if (maxTokens.HasValue && maxTokens.Value > 0 && usedForMax.HasValue)
+                {
+                    remaining = Math.Max(0, maxTokens.Value - usedForMax.Value);
+                }
+
+                var payload = new JObject
+                {
+                    ["prompt_tokens"] = promptTokens,
+                    ["completion_tokens"] = completionTokens,
+                    ["total_tokens"] = totalTokens,
+                    ["max_tokens"] = maxTokens,
+                    ["used_for_max_tokens"] = usedForMax,
+                    ["remaining_tokens"] = remaining,
+                    ["estimated"] = estimated
+                };
+
+                // 记录 usage 到日志文件，便于复盘（仅在启用日志时写入）
+                SaveUsageToLog(payload);
+
+                OnUsageReady?.Invoke(payload);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"NotifyUsage 处理失败: {ex.Message}");
+            }
+        }
+
+        // 保存 usage 到日志（JSONL，一行一条）
+        private static void SaveUsageToLog(JObject payload)
+        {
+            try
+            {
+                if (!EnableLogging) return;
+                if (payload == null) return;
+
+                string pluginDirectory = GetUserDataRoot();
+                string dateFolder = DateTime.Now.ToString("yyyyMMdd");
+                string logDirectory = Path.Combine(pluginDirectory, "logs", "openai_usage", dateFolder);
+                Directory.CreateDirectory(logDirectory);
+
+                string filepath = Path.Combine(logDirectory, "usage.jsonl");
+                var lineObj = (JObject)payload.DeepClone();
+                lineObj["timestamp"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+                File.AppendAllText(filepath, lineObj.ToString(Formatting.None) + Environment.NewLine, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"保存usage日志失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 追加一条 usage 调试日志到 openai_usage（JSONL）。
+        /// 用于记录“上下文估算/阈值”等非服务商返回的解释性信息，便于复盘为何触发自动压缩。
+        /// </summary>
+        public static void LogUsageDebug(string eventName, JObject data = null)
+        {
+            try
+            {
+                if (!EnableLogging) return;
+
+                var payload = new JObject
+                {
+                    ["type"] = "usage_debug",
+                    ["event"] = string.IsNullOrWhiteSpace(eventName) ? "unknown" : eventName
+                };
+
+                if (data != null)
+                {
+                    foreach (var prop in data.Properties())
+                    {
+                        payload[prop.Name] = prop.Value;
+                    }
+                }
+
+                SaveUsageToLog(payload);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"LogUsageDebug 失败: {ex.Message}");
+            }
+        }
+
+        // 简单 token 估算：按 UTF8 字节 / 4 取整（粗略但足够用于“剩余 max_tokens”展示）
+        private static int EstimateTokens(string text)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(text)) return 0;
+                int bytes = Encoding.UTF8.GetByteCount(text);
+                return (int)Math.Ceiling(bytes / 4.0);
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         // 保存错误响应到日志文件
@@ -250,14 +511,26 @@ namespace WordCopilot.utils
                 // 支持TLS 1.2和1.3,否则无法正常请求https请求
                 SslProtocols = System.Security.Authentication.SslProtocols.Tls12 | System.Security.Authentication.SslProtocols.Tls13
             });
+
             // 解析 JSON 字符串（移到 try 外以便在 catch 中使用）
             JObject jsonObject = null;
+
             try
             {
-                // 解析 JSON 字符串
-            
                 jsonObject = JObject.Parse(json);
                 bool stream = jsonObject["stream"] != null && jsonObject["stream"].Value<bool>();
+                int? maxTokens = jsonObject["max_tokens"]?.ToObject<int?>();
+
+                // 若为流式输出，尽量请求在流结束时返回 usage（OpenAI 标准：stream_options.include_usage）
+                // 不同服务商可能忽略该字段，但添加它通常是安全的
+                if (stream)
+                {
+                    if (jsonObject["stream_options"] == null || jsonObject["stream_options"].Type != JTokenType.Object)
+                    {
+                        jsonObject["stream_options"] = new JObject();
+                    }
+                    jsonObject["stream_options"]["include_usage"] = true;
+                }
 
                 // 如果有工具且是智能体模式，添加工具定义
                 if (_tools.Count > 0 && messages != null)
@@ -265,17 +538,19 @@ namespace WordCopilot.utils
                     Debug.WriteLine($"检测到 {_tools.Count} 个工具，添加到请求中");
 
                     // 保存Agent模式的初始请求（在添加工具之前）
-                    SaveRequestForPostman(baseUrl, apiKey, jsonObject, "agent_initial");
+                    var preparedAgentInit = PrepareSendAndLogBodies(jsonObject);
+                    SaveRequestForPostman(baseUrl, apiKey, preparedAgentInit.logBody, "agent_initial");
 
-                    await CallWithTools(baseUrl, apiKey, jsonObject, cancellationToken, onContentReceived, messages, _httpClient);
+                    await CallWithTools(baseUrl, apiKey, preparedAgentInit.sendBody, cancellationToken, onContentReceived, messages, _httpClient);
                     return;
                 }
 
                 // 设置超时
                 _httpClient.Timeout = TimeSpan.FromMinutes(5);
 
-                // 保存普通模式的请求
-                SaveRequestForPostman(baseUrl, apiKey, jsonObject, "general");
+                // 保存普通模式的请求（日志带 think 字段；发送给模型不带 think 且 content 去除 <think>）
+                var prepared = PrepareSendAndLogBodies(jsonObject);
+                SaveRequestForPostman(baseUrl, apiKey, prepared.logBody, "general");
 
                 var request = new HttpRequestMessage(HttpMethod.Post, baseUrl)
                 {
@@ -283,7 +558,7 @@ namespace WordCopilot.utils
             {
                 Authorization = new AuthenticationHeaderValue("Bearer", apiKey)
             },
-                    Content = new StringContent(JsonConvert.SerializeObject(jsonObject), Encoding.UTF8, "application/json")
+                    Content = new StringContent(JsonConvert.SerializeObject(prepared.sendBody), Encoding.UTF8, "application/json")
                 };
 
                 using (var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
@@ -294,6 +569,12 @@ namespace WordCopilot.utils
                     {
                         using (var streamReader = new System.IO.StreamReader(await response.Content.ReadAsStreamAsync()))
                         {
+                            bool usageNotified = false;
+                            var streamedText = new StringBuilder();
+                            // 兼容 reasoning_content：将其包裹在 <think> 中流式输出，供前端折叠渲染
+                            bool thinkStarted = false;
+                            bool thinkClosed = false;
+
                             string line;
                             while ((line = await streamReader.ReadLineAsync()) != null)
                             {
@@ -311,14 +592,45 @@ namespace WordCopilot.utils
                                     try
                                     {
                                         var decodedLine = JsonConvert.DeserializeObject<JObject>(cleanLine);
+                                        // 捕获 usage（通常在流式结束前的最后一个 chunk 出现）
+                                        var usageObj = decodedLine?["usage"] as JObject;
+                                        if (usageObj != null)
+                                        {
+                                            usageNotified = true;
+                                            NotifyUsage(usageObj, maxTokens);
+                                        }
                                         if (decodedLine?["choices"] is JArray choices)
                                         {
                                             foreach (var choice in choices)
                                             {
-                                                if (choice["delta"]?["content"] is JToken content)
+                                                var delta = choice["delta"] as JObject;
+                                                if (delta != null)
                                                 {
-                                                    var contentString = content.ToString();
-                                                    onContentReceived?.Invoke(contentString);
+                                                    // 先处理 reasoning_content（部分模型会单独输出思考过程）
+                                                    var reasoningChunk = delta["reasoning_content"]?.ToString();
+                                                    if (!string.IsNullOrEmpty(reasoningChunk))
+                                                    {
+                                                        if (!thinkStarted)
+                                                        {
+                                                            onContentReceived?.Invoke("<think>\n");
+                                                            thinkStarted = true;
+                                                        }
+                                                        streamedText.Append(reasoningChunk);
+                                                        onContentReceived?.Invoke(reasoningChunk);
+                                                    }
+
+                                                    // 再处理正文内容：一旦正文开始，先关闭 <think>
+                                                    var contentChunk = delta["content"]?.ToString();
+                                                    if (!string.IsNullOrEmpty(contentChunk))
+                                                    {
+                                                        if (thinkStarted && !thinkClosed)
+                                                        {
+                                                            onContentReceived?.Invoke("\n</think>\n\n");
+                                                            thinkClosed = true;
+                                                        }
+                                                        streamedText.Append(contentChunk);
+                                                        onContentReceived?.Invoke(contentChunk);
+                                                    }
                                                 }
                                             }
                                         }
@@ -330,13 +642,40 @@ namespace WordCopilot.utils
                                     }
                                 }
                             }
+
+                            // 若流结束仍未关闭 <think>，补一个结束标签，避免前端误判
+                            if (thinkStarted && !thinkClosed)
+                            {
+                                onContentReceived?.Invoke("\n</think>\n\n");
+                                thinkClosed = true;
+                            }
+
+                            // 若服务商不返回 usage，则做一次估算用于前端展示（仅用于 max_tokens 扣减）
+                            if (!usageNotified && maxTokens.HasValue && maxTokens.Value > 0 && streamedText.Length > 0)
+                            {
+                                int estCompletionTokens = EstimateTokens(streamedText.ToString());
+                                NotifyUsage(new JObject
+                                {
+                                    ["completion_tokens"] = estCompletionTokens
+                                }, maxTokens, estimated: true);
+                            }
                         }
                     }
                     else
                     {
                         var responseBody = await response.Content.ReadAsStringAsync();
                         var decodedLine = JsonConvert.DeserializeObject<JObject>(responseBody);
+                        var usageObj = decodedLine?["usage"] as JObject;
+                        if (usageObj != null)
+                        {
+                            NotifyUsage(usageObj, maxTokens);
+                        }
                         var content = decodedLine?["choices"]?[0]?["message"]?["content"]?.ToString();
+                        var reasoning = decodedLine?["choices"]?[0]?["message"]?["reasoning_content"]?.ToString();
+                        if (!string.IsNullOrEmpty(reasoning))
+                        {
+                            content = $"<think>\n{reasoning}\n</think>\n\n{content}";
+                        }
                         Console.WriteLine("Content: " + content);
                         onContentReceived?.Invoke(content);
                     }
@@ -386,7 +725,9 @@ namespace WordCopilot.utils
                         stack_trace = e.StackTrace,
                         inner_exception = e.InnerException?.Message
                     };
-                    SaveErrorToLog(baseUrl, jsonObject, JsonConvert.SerializeObject(errorDetail), "UnexpectedError", "general_unexpected_error");
+                    // 如果 jsonObject 为 null（JSON解析失败），创建一个包含原始json的对象
+                    var requestBody = jsonObject ?? new JObject { ["raw_json"] = json };
+                    SaveErrorToLog(baseUrl, requestBody, JsonConvert.SerializeObject(errorDetail), "UnexpectedError", "general_unexpected_error");
                 }
                 catch (Exception logEx)
                 {
@@ -436,6 +777,13 @@ namespace WordCopilot.utils
 
                 // 支持流式工具调用（现代AI工具的标准做法）
                 requestBody["stream"] = true;
+
+                // 请求在流式结束时返回 usage（如服务商支持）
+                if (requestBody["stream_options"] == null || requestBody["stream_options"].Type != JTokenType.Object)
+                {
+                    requestBody["stream_options"] = new JObject();
+                }
+                requestBody["stream_options"]["include_usage"] = true;
 
                 Debug.WriteLine($"发送带工具的请求，工具数量: {functionDefinitions.Count}");
                 Debug.WriteLine("使用流式响应模式支持现代AI工具体验");
@@ -721,6 +1069,7 @@ namespace WordCopilot.utils
 
                 var toolCallsMap = new Dictionary<int, JObject>(); // 使用索引来合并分段的tool_calls
                 var contentParts = new List<string>();
+                var reasoningParts = new List<string>();
 
                 foreach (var part in jsonParts)
                 {
@@ -730,6 +1079,13 @@ namespace WordCopilot.utils
                         var delta = choices[0]["delta"];
                         if (delta != null)
                         {
+                            // 提取 reasoning_content（如有）
+                            var reasoning = delta["reasoning_content"]?.ToString();
+                            if (!string.IsNullOrEmpty(reasoning))
+                            {
+                                reasoningParts.Add(reasoning);
+                            }
+
                             // 提取content
                             var content = delta["content"]?.ToString();
                             if (!string.IsNullOrEmpty(content))
@@ -805,6 +1161,11 @@ namespace WordCopilot.utils
 
                 // 设置合并后的内容
                 result["choices"][0]["message"]["content"] = string.Join("", contentParts);
+                // 透出 reasoning_content（若有），便于上层按需处理
+                if (reasoningParts.Count > 0)
+                {
+                    result["choices"][0]["message"]["reasoning_content"] = string.Join("", reasoningParts);
+                }
 
                 // 设置tool_calls
                 if (toolCallsMap.Count > 0)
@@ -896,6 +1257,13 @@ namespace WordCopilot.utils
                 {
                     var currentToolCalls = new List<dynamic>();
                     var currentContent = new StringBuilder();
+                    bool usageNotified = false;
+                    // 兼容 reasoning_content：将其包裹在 <think> 中输出，供前端折叠渲染
+                    bool thinkStarted = false;
+                    bool thinkClosed = false;
+                    // 重要：思考模式 + 工具调用时，需要将 reasoning_content 回传给 API（DeepSeek/Kimi 等）
+                    var currentReasoning = new StringBuilder();
+                    bool sawReasoning = false;
 
                     string line;
                     while ((line = await reader.ReadLineAsync()) != null)
@@ -912,6 +1280,15 @@ namespace WordCopilot.utils
                             try
                             {
                                 var chunk = JObject.Parse(jsonData);
+
+                                // 捕获 usage（当 stream_options.include_usage 生效时，通常在最后一个 chunk 带上）
+                                var usageObj = chunk["usage"] as JObject;
+                                if (usageObj != null)
+                                {
+                                    int? maxTokens = requestBody["max_tokens"]?.ToObject<int?>();
+                                    usageNotified = true;
+                                    NotifyUsage(usageObj, maxTokens);
+                                }
                                 var choices = chunk["choices"] as JArray;
 
                                 if (choices != null && choices.Count > 0)
@@ -921,10 +1298,30 @@ namespace WordCopilot.utils
 
                                     if (delta != null)
                                     {
+                                        // 先处理 reasoning_content（部分模型会单独输出思考过程）
+                                        var reasoningChunk = delta["reasoning_content"]?.ToString();
+                                        if (!string.IsNullOrEmpty(reasoningChunk))
+                                        {
+                                            sawReasoning = true;
+                                            currentReasoning.Append(reasoningChunk);
+                                            if (!thinkStarted)
+                                            {
+                                                onContentReceived?.Invoke("<think>\n");
+                                                thinkStarted = true;
+                                            }
+                                            onContentReceived?.Invoke(reasoningChunk);
+                                        }
+
                                         // 处理文本内容 - 实现内联效果
                                         var content = delta["content"]?.ToString();
                                         if (!string.IsNullOrEmpty(content))
                                         {
+                                            // 正文开始前先关闭 <think>
+                                            if (thinkStarted && !thinkClosed)
+                                            {
+                                                onContentReceived?.Invoke("\n</think>\n\n");
+                                                thinkClosed = true;
+                                            }
                                             currentContent.Append(content);
                                             onContentReceived?.Invoke(content);
                                         }
@@ -987,9 +1384,16 @@ namespace WordCopilot.utils
                                     var finishReason = choice["finish_reason"]?.ToString();
                                     if (finishReason == "tool_calls")
                                     {
+                                        // 若进入工具调用阶段，确保 <think> 已闭合，避免前端误判
+                                        if (thinkStarted && !thinkClosed)
+                                        {
+                                            onContentReceived?.Invoke("\n</think>\n\n");
+                                            thinkClosed = true;
+                                        }
                                         Debug.WriteLine("CallWithToolsStreaming: 检测到tool_calls，开始执行工具");
                                         // 执行工具调用并继续对话
-                                        await ExecuteToolCallsAsync(currentToolCalls, conversationMessages, baseUrl, apiKey, requestBody, httpClient, cancellationToken, onContentReceived);
+                                        string reasoningToSend = sawReasoning ? currentReasoning.ToString() : null;
+                                        await ExecuteToolCallsAsync(currentToolCalls, conversationMessages, baseUrl, apiKey, requestBody, httpClient, cancellationToken, onContentReceived, reasoningToSend);
                                         return;
                                     }
                                     else if (!string.IsNullOrEmpty(finishReason))
@@ -1005,7 +1409,25 @@ namespace WordCopilot.utils
                         }
                     }
 
+                    // 若流结束仍未关闭 <think>，补一个结束标签
+                    if (thinkStarted && !thinkClosed)
+                    {
+                        onContentReceived?.Invoke("\n</think>\n\n");
+                        thinkClosed = true;
+                    }
+
                     Debug.WriteLine($"CallWithToolsStreaming: 流式处理结束，内容长度: {currentContent.Length}");
+
+                    // 若服务商不返回 usage，则做一次估算用于前端展示（仅用于 max_tokens 扣减）
+                    int? reqMaxTokens = requestBody["max_tokens"]?.ToObject<int?>();
+                    if (!usageNotified && reqMaxTokens.HasValue && reqMaxTokens.Value > 0 && currentContent.Length > 0)
+                    {
+                        int estCompletionTokens = EstimateTokens(currentContent.ToString());
+                        NotifyUsage(new JObject
+                        {
+                            ["completion_tokens"] = estCompletionTokens
+                        }, reqMaxTokens, estimated: true);
+                    }
                 }
             }
 
@@ -1013,7 +1435,7 @@ namespace WordCopilot.utils
         }
 
         // 执行工具调用的辅助方法
-        private static async Task ExecuteToolCallsAsync(List<dynamic> toolCalls, List<JObject> conversationMessages, string baseUrl, string apiKey, JObject requestBody, HttpClient httpClient, CancellationToken cancellationToken, Action<string> onContentReceived)
+        private static async Task ExecuteToolCallsAsync(List<dynamic> toolCalls, List<JObject> conversationMessages, string baseUrl, string apiKey, JObject requestBody, HttpClient httpClient, CancellationToken cancellationToken, Action<string> onContentReceived, string reasoningContent)
         {
             // 添加助手消息到对话历史
             var toolCallsArray = new JArray();
@@ -1031,12 +1453,19 @@ namespace WordCopilot.utils
                 });
             }
 
-            conversationMessages.Add(new JObject
+            var assistantToolCallMsg = new JObject
             {
                 ["role"] = "assistant",
                 ["content"] = "",
                 ["tool_calls"] = toolCallsArray
-            });
+            };
+            // 关键兼容：思考模式下的工具调用需要回传 reasoning_content（DeepSeek/Kimi 等）
+            // 注意：这只在“同一轮工具链子请求”里需要；跨轮对话仍然不拼接 reasoning_content（由上层控制）
+            if (!string.IsNullOrEmpty(reasoningContent))
+            {
+                assistantToolCallMsg["reasoning_content"] = reasoningContent;
+            }
+            conversationMessages.Add(assistantToolCallMsg);
 
             // 执行每个工具调用
             foreach (var toolCall in toolCalls)
@@ -1095,7 +1524,8 @@ namespace WordCopilot.utils
             requestBody["messages"] = JArray.FromObject(conversationMessages);
 
             // 保存Agent模式的后续请求（工具执行后）
-            SaveRequestForPostman(baseUrl, apiKey, requestBody, "agent_followup");
+            var preparedFollowup = PrepareSendAndLogBodies(requestBody);
+            SaveRequestForPostman(baseUrl, apiKey, preparedFollowup.logBody, "agent_followup");
 
             Debug.WriteLine($"ExecuteToolCallsAsync: 工具执行完成，继续调用API获取最终回复，对话历史数量: {conversationMessages.Count}");
 
@@ -1108,7 +1538,7 @@ namespace WordCopilot.utils
                 newHttpClient.Timeout = TimeSpan.FromMinutes(5);
                 Debug.WriteLine("ExecuteToolCallsAsync: 创建新的HttpClient实例用于递归调用");
 
-                await CallWithToolsStreaming(baseUrl, apiKey, requestBody, newHttpClient, cancellationToken, onContentReceived, conversationMessages);
+                await CallWithToolsStreaming(baseUrl, apiKey, preparedFollowup.sendBody, newHttpClient, cancellationToken, onContentReceived, conversationMessages);
 
                 Debug.WriteLine("ExecuteToolCallsAsync: 递归调用完成");
             }

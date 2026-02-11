@@ -50,7 +50,8 @@ namespace WordCopilotChat.services
                     EnableMulti = m.EnableMulti,
                     EnableTools = m.EnableTools,
                     EnableThink = m.EnableThink,
-                    modelType = m.modelType
+                    modelType = m.modelType,
+                    ContextLength = m.ContextLength
                 });
         }
 
@@ -74,7 +75,8 @@ namespace WordCopilotChat.services
                     EnableMulti = m.EnableMulti,
                     EnableTools = m.EnableTools,
                     EnableThink = m.EnableThink,
-                    modelType = m.modelType
+                    modelType = m.modelType,
+                    ContextLength = m.ContextLength
                 });
         }
 
@@ -117,6 +119,7 @@ namespace WordCopilotChat.services
                     .Set(m => m.EnableTools, model.EnableTools)
                     .Set(m => m.EnableThink, model.EnableThink)
                     .Set(m => m.modelType, model.modelType)
+                    .Set(m => m.ContextLength, model.ContextLength)
                     .Where(m => m.Id == model.Id)
                     .ExecuteAffrows() > 0;
             }

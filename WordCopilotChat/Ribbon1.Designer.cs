@@ -36,15 +36,15 @@
         {
             this.tab1 = this.Factory.CreateRibbonTab();
             this.group1 = this.Factory.CreateRibbonGroup();
-            this.button1 = this.Factory.CreateRibbonButton();
             this.group2 = this.Factory.CreateRibbonGroup();
-            this.btnModel = this.Factory.CreateRibbonButton();
             this.separator1 = this.Factory.CreateRibbonSeparator();
-            this.btnPrompt = this.Factory.CreateRibbonButton();
             this.separator2 = this.Factory.CreateRibbonSeparator();
-            this.btnDoc = this.Factory.CreateRibbonButton();
             this.separator3 = this.Factory.CreateRibbonSeparator();
             this.checkBoxLog = this.Factory.CreateRibbonCheckBox();
+            this.button1 = this.Factory.CreateRibbonButton();
+            this.btnModel = this.Factory.CreateRibbonButton();
+            this.btnPrompt = this.Factory.CreateRibbonButton();
+            this.btnDoc = this.Factory.CreateRibbonButton();
             this.tab1.SuspendLayout();
             this.group1.SuspendLayout();
             this.group2.SuspendLayout();
@@ -62,15 +62,6 @@
             this.group1.Items.Add(this.button1);
             this.group1.Name = "group1";
             // 
-            // button1
-            // 
-            this.button1.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeLarge;
-            this.button1.Image = global::WordCopilotChat.Properties.Resources.uil__robot;
-            this.button1.Label = "打开对话页";
-            this.button1.Name = "button1";
-            this.button1.ShowImage = true;
-            this.button1.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.button1_Click);
-            // 
             // group2
             // 
             this.group2.Items.Add(this.btnModel);
@@ -82,40 +73,13 @@
             this.group2.Items.Add(this.checkBoxLog);
             this.group2.Name = "group2";
             // 
-            // btnModel
-            // 
-            this.btnModel.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeLarge;
-            this.btnModel.Image = global::WordCopilotChat.Properties.Resources.uil__setting;
-            this.btnModel.Label = "模型管理";
-            this.btnModel.Name = "btnModel";
-            this.btnModel.ShowImage = true;
-            this.btnModel.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.btnModel_Click);
-            // 
             // separator1
             // 
             this.separator1.Name = "separator1";
             // 
-            // btnPrompt
-            // 
-            this.btnPrompt.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeLarge;
-            this.btnPrompt.Image = global::WordCopilotChat.Properties.Resources.uil__wrench;
-            this.btnPrompt.Label = "提示词管理";
-            this.btnPrompt.Name = "btnPrompt";
-            this.btnPrompt.ShowImage = true;
-            this.btnPrompt.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.btnPrompt_Click);
-            // 
             // separator2
             // 
             this.separator2.Name = "separator2";
-            // 
-            // btnDoc
-            // 
-            this.btnDoc.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeLarge;
-            this.btnDoc.Image = global::WordCopilotChat.Properties.Resources.uil__book_reader;
-            this.btnDoc.Label = "文档管理";
-            this.btnDoc.Name = "btnDoc";
-            this.btnDoc.ShowImage = true;
-            this.btnDoc.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.btnDoc_Click);
             // 
             // separator3
             // 
@@ -126,6 +90,42 @@
             this.checkBoxLog.Label = "日志存储";
             this.checkBoxLog.Name = "checkBoxLog";
             this.checkBoxLog.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.checkBoxLog_Click);
+            // 
+            // button1
+            // 
+            this.button1.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeLarge;
+            this.button1.Image = global::WordCopilotChat.Properties.Resources.uil__robot_Blue;
+            this.button1.Label = "打开对话页";
+            this.button1.Name = "button1";
+            this.button1.ShowImage = true;
+            this.button1.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.button1_Click);
+            // 
+            // btnModel
+            // 
+            this.btnModel.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeLarge;
+            this.btnModel.Image = global::WordCopilotChat.Properties.Resources.uil__setting_Blue;
+            this.btnModel.Label = "模型管理";
+            this.btnModel.Name = "btnModel";
+            this.btnModel.ShowImage = true;
+            this.btnModel.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.btnModel_Click);
+            // 
+            // btnPrompt
+            // 
+            this.btnPrompt.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeLarge;
+            this.btnPrompt.Image = global::WordCopilotChat.Properties.Resources.uil__wrench_Blue;
+            this.btnPrompt.Label = "提示词管理";
+            this.btnPrompt.Name = "btnPrompt";
+            this.btnPrompt.ShowImage = true;
+            this.btnPrompt.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.btnPrompt_Click);
+            // 
+            // btnDoc
+            // 
+            this.btnDoc.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeLarge;
+            this.btnDoc.Image = global::WordCopilotChat.Properties.Resources.uil__book_reader_Blue;
+            this.btnDoc.Label = "文档管理";
+            this.btnDoc.Name = "btnDoc";
+            this.btnDoc.ShowImage = true;
+            this.btnDoc.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.btnDoc_Click);
             // 
             // Ribbon1
             // 

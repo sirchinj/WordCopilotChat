@@ -73,9 +73,29 @@ namespace WordCopilotChat.Properties {
         /// <summary>
         ///   查找 System.Drawing.Bitmap 类型的本地化资源。
         /// </summary>
+        internal static System.Drawing.Bitmap uil__book_reader_Blue {
+            get {
+                object obj = ResourceManager.GetObject("uil__book_reader_Blue", resourceCulture);
+                return ((System.Drawing.Bitmap)(obj));
+            }
+        }
+        
+        /// <summary>
+        ///   查找 System.Drawing.Bitmap 类型的本地化资源。
+        /// </summary>
         internal static System.Drawing.Bitmap uil__robot {
             get {
                 object obj = ResourceManager.GetObject("uil__robot", resourceCulture);
+                return ((System.Drawing.Bitmap)(obj));
+            }
+        }
+        
+        /// <summary>
+        ///   查找 System.Drawing.Bitmap 类型的本地化资源。
+        /// </summary>
+        internal static System.Drawing.Bitmap uil__robot_Blue {
+            get {
+                object obj = ResourceManager.GetObject("uil__robot_Blue", resourceCulture);
                 return ((System.Drawing.Bitmap)(obj));
             }
         }
@@ -93,9 +113,29 @@ namespace WordCopilotChat.Properties {
         /// <summary>
         ///   查找 System.Drawing.Bitmap 类型的本地化资源。
         /// </summary>
+        internal static System.Drawing.Bitmap uil__setting_Blue {
+            get {
+                object obj = ResourceManager.GetObject("uil__setting_Blue", resourceCulture);
+                return ((System.Drawing.Bitmap)(obj));
+            }
+        }
+        
+        /// <summary>
+        ///   查找 System.Drawing.Bitmap 类型的本地化资源。
+        /// </summary>
         internal static System.Drawing.Bitmap uil__wrench {
             get {
                 object obj = ResourceManager.GetObject("uil__wrench", resourceCulture);
+                return ((System.Drawing.Bitmap)(obj));
+            }
+        }
+        
+        /// <summary>
+        ///   查找 System.Drawing.Bitmap 类型的本地化资源。
+        /// </summary>
+        internal static System.Drawing.Bitmap uil__wrench_Blue {
+            get {
+                object obj = ResourceManager.GetObject("uil__wrench_Blue", resourceCulture);
                 return ((System.Drawing.Bitmap)(obj));
             }
         }

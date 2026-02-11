@@ -20,7 +20,13 @@ namespace WordCopilotChat
             // 设置TextBox属性以优化文本显示
             ConfigureTextBoxes();
             
+            // 订阅Tab切换事件
+            tabControl1.SelectedIndexChanged += TabControl1_SelectedIndexChanged;
+            
             LoadPrompts();
+            
+            // 初始化Token估算显示
+            UpdateTokenEstimate();
             
             // 调试信息：检查文本内容
             System.Diagnostics.Debug.WriteLine("=== TextBox配置完成 ===");
@@ -41,6 +47,7 @@ namespace WordCopilotChat
             ConfigureTextBox(txtChatPrompt);
             ConfigureTextBox(txtAgentPrompt);
             ConfigureTextBox(txtWelcomePrompt);
+            ConfigureTextBox(txtCompressPrompt);
         }
         
         private void ConfigureTextBox(TextBox textBox)
@@ -70,6 +77,56 @@ namespace WordCopilotChat
             // 设置右键菜单
             textBox.ShortcutsEnabled = true;
         }
+        
+        /// <summary>
+        /// 估算文本的Token数（简单估算：中文约1.5字符/token，英文约4字符/token）
+        /// </summary>
+        private int EstimateTokenCount(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return 0;
+                
+            int chineseCount = 0;
+            int otherCount = 0;
+            
+            foreach (char c in text)
+            {
+                if (c >= 0x4E00 && c <= 0x9FFF)
+                    chineseCount++;
+                else
+                    otherCount++;
+            }
+            
+            return Math.Max(1, (int)(chineseCount / 1.5) + (int)(otherCount / 4.0));
+        }
+        
+        /// <summary>
+        /// 更新当前Tab的Token估算显示
+        /// </summary>
+        private void UpdateTokenEstimate()
+        {
+            string content = GetCurrentContent();
+            int tokenCount = EstimateTokenCount(content);
+            
+            // 更新对应Tab的描述标签
+            if (tabControl1.SelectedTab == tabPageChat)
+            {
+                lblChatDesc.Text = $"智能问答模式用于普通对话。该模式下AI不会主动调用Word工具。\n【Token估算: ~{tokenCount} tokens】";
+            }
+            else if (tabControl1.SelectedTab == tabPageAgent)
+            {
+                lblAgentDesc.Text = $"智能体模式具备智能代理能力，可以主动调用Word工具完成复杂文档操作。\n【Token估算: ~{tokenCount} tokens】";
+            }
+            else if (tabControl1.SelectedTab == tabPageWelcome)
+            {
+                // 欢迎页内容不参与对话请求，不需要 Token 估算提示
+                lblWelcomeDesc.Text = "欢迎页在用户首次打开聊天界面时显示，支持Markdown格式。";
+            }
+            else if (tabControl1.SelectedTab == tabPageCompress)
+            {
+                lblCompressDesc.Text = $"当对话历史Token占用过高时，系统会自动调用此提示词进行压缩总结。\n【Token估算: ~{tokenCount} tokens】";
+            }
+        }
 
         private void LoadPrompts()
         {
@@ -83,6 +140,9 @@ namespace WordCopilotChat
                 
                 // 加载欢迎页提示词并转换换行符
                 txtWelcomePrompt.Text = NormalizeLineEndings(PromptService.GetPrompt("welcome"));
+                
+                // 加载上下文压缩提示词并转换换行符
+                txtCompressPrompt.Text = NormalizeLineEndings(PromptService.GetPrompt("compress-context"));
                 
                 // 强制刷新显示
                 RefreshTextBoxes();
@@ -160,6 +220,9 @@ namespace WordCopilotChat
             
             txtWelcomePrompt.Invalidate();
             txtWelcomePrompt.Refresh();
+            
+            txtCompressPrompt.Invalidate();
+            txtCompressPrompt.Refresh();
         }
 
         private void SavePrompts()
@@ -183,6 +246,11 @@ namespace WordCopilotChat
                     var welcomeToSave = PrepareForSave(txtWelcomePrompt.Text);
                     PromptService.SetPrompt("welcome", welcomeToSave);
                 }
+                else if (current == tabPageCompress)
+                {
+                    var compressToSave = PrepareForSave(txtCompressPrompt.Text);
+                    PromptService.SetPrompt("compress-context", compressToSave);
+                }
                 
                 // 刷新PromptService缓存
                 PromptService.RefreshCache();
@@ -201,7 +269,10 @@ namespace WordCopilotChat
         private void ResetToDefaults()
         {
             var current = tabControl1.SelectedTab;
-            string targetType = current == tabPageChat ? "chat" : current == tabPageAgent ? "chat-agent" : "welcome";
+            string targetType = current == tabPageChat ? "chat" 
+                : current == tabPageAgent ? "chat-agent" 
+                : current == tabPageCompress ? "compress-context"
+                : "welcome";
             var result = MessageBox.Show($"确定要重置当前页（{targetType}）提示词为默认值吗？此操作不可撤销。",
                 "确认重置", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                 
@@ -215,6 +286,8 @@ namespace WordCopilotChat
                         txtChatPrompt.Text = NormalizeLineEndings(PromptService.GetPrompt("chat"));
                     else if (targetType == "chat-agent")
                         txtAgentPrompt.Text = NormalizeLineEndings(PromptService.GetPrompt("chat-agent"));
+                    else if (targetType == "compress-context")
+                        txtCompressPrompt.Text = NormalizeLineEndings(PromptService.GetPrompt("compress-context"));
                     else
                         txtWelcomePrompt.Text = NormalizeLineEndings(PromptService.GetPrompt("welcome"));
                     _hasChanges = false;
@@ -238,6 +311,12 @@ namespace WordCopilotChat
         {
             _hasChanges = true;
             UpdateButtonStates();
+            UpdateTokenEstimate();
+        }
+        
+        private void TabControl1_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            UpdateTokenEstimate();
         }
 
         private void BtnSave_Click(object sender, EventArgs e)
@@ -281,6 +360,7 @@ namespace WordCopilotChat
         {
             if (tabControl1.SelectedTab == tabPageChat) return "chat";
             if (tabControl1.SelectedTab == tabPageAgent) return "chat-agent";
+            if (tabControl1.SelectedTab == tabPageCompress) return "compress-context";
             return "welcome";
         }
 
@@ -288,6 +368,7 @@ namespace WordCopilotChat
         {
             if (tabControl1.SelectedTab == tabPageChat) return txtChatPrompt.Text;
             if (tabControl1.SelectedTab == tabPageAgent) return txtAgentPrompt.Text;
+            if (tabControl1.SelectedTab == tabPageCompress) return txtCompressPrompt.Text;
             return txtWelcomePrompt.Text;
         }
 
@@ -295,6 +376,7 @@ namespace WordCopilotChat
         {
             if (tabControl1.SelectedTab == tabPageChat) txtChatPrompt.Text = text;
             else if (tabControl1.SelectedTab == tabPageAgent) txtAgentPrompt.Text = text;
+            else if (tabControl1.SelectedTab == tabPageCompress) txtCompressPrompt.Text = text;
             else txtWelcomePrompt.Text = text;
         }
 
@@ -420,6 +502,11 @@ namespace WordCopilotChat
         private void BtnPreviewWelcome_Click(object sender, EventArgs e)
         {
             ShowPromptPreview("欢迎页内容", txtWelcomePrompt.Text);
+        }
+
+        private void BtnPreviewCompress_Click(object sender, EventArgs e)
+        {
+            ShowPromptPreview("上下文压缩提示词", txtCompressPrompt.Text);
         }
 
         private void ShowPromptPreview(string title, string content)

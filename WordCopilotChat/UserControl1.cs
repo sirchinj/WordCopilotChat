@@ -41,11 +41,23 @@ namespace WordCopilotChat
         // 最大历史记录数量（避免内存占用过大）
         private const int MAX_HISTORY_COUNT = 20;
 
+        // 加载的文档内容（用于Chat和Agent模式）
+        private string _loadedDocumentContent = null;
+        private DateTime _documentLoadedTime = DateTime.MinValue;
+
         // 用于取消API请求的CancellationTokenSource
         private CancellationTokenSource _cancellationTokenSource;
 
         // 用于取消获取文档标题操作的CancellationTokenSource
         private CancellationTokenSource _headingsCancellationTokenSource;
+
+        // 用于取消“加载当前Word文档”操作的CancellationTokenSource
+        private CancellationTokenSource _loadDocumentCancellationTokenSource;
+        // 加载文档操作序号（用于丢弃过期结果）
+        private int _loadDocumentOpId = 0;
+        // 是否正在加载文档
+        private volatile bool _isLoadingDocument = false;
+
 
         // 模型服务
         private ModelService _modelService;
@@ -53,11 +65,25 @@ namespace WordCopilotChat
         // 文档服务
         private DocumentService _documentService;
 
+        // 内部请求（如上下文压缩）期间，避免向前端推送 usage，防止 Token 百分比跳变
+        private int _suppressUsageToFrontendCount = 0;
+        // 最近一次 usage（用于调试输出）
+        private JObject _lastUsagePayload = null;
+
         // 应用设置服务
         private AppSettingsService _appSettingsService;
 
         // 当前使用的模型配置（用于用户操作反馈对话）
         private Model _currentModelConfig;
+        // 最近一次对话所使用的模型请求信息（用于“强制压缩”等非发送路径触发的内部请求）
+        private string _currentApiUrl;
+        private string _currentApiKey;
+        private string _currentModelName;
+        // 最近一次对话的系统提示词与 max_tokens（用于压缩后估算并刷新 Token 使用率）
+        private string _lastChatSystemPrompt;
+        private int? _lastChatMaxTokens;
+        // 防止并发压缩（0=未压缩中，1=压缩中）
+        private int _compressingFlag = 0;
 
         public UserControl1()
         {
@@ -72,6 +98,9 @@ namespace WordCopilotChat
 
             // 订阅工具进度事件
             OpenAIUtils.OnToolProgress += HandleToolProgressFromOpenAI;
+
+            // 订阅 usage 事件（token 用量）
+            OpenAIUtils.OnUsageReady += HandleUsageFromOpenAI;
         }
 
         private async void UserControl1_Load(object sender, EventArgs e)
@@ -256,10 +285,43 @@ namespace WordCopilotChat
                             HandleUserMessage(messageContent, chatMode, enabledTools, selectedModelId, contexts, images);
                             break;
 
+                        case "loadDocument":
+                            // 处理加载文档内容的请求
+                            Debug.WriteLine("收到加载文档内容请求");
+                            HandleLoadDocument();
+                            break;
+
+                        case "cancelLoadDocument":
+                            Debug.WriteLine("收到取消加载文档请求");
+                            CancelLoadDocument();
+                            break;
+
+                        case "unloadDocument":
+                            Debug.WriteLine("收到卸载已加载文档请求");
+                            UnloadDocument();
+                            break;
+
                         case "clearHistory":
                             // 处理清空对话历史的请求
                             Debug.WriteLine("收到清空对话历史请求");
                             ClearConversationHistory();
+                            break;
+
+                        case "forceCompress":
+                            // 强制压缩对话历史（由前端按钮触发）
+                            Debug.WriteLine("收到强制压缩请求");
+                            // 必须在 UI 线程执行 WebView2 相关操作
+                            if (InvokeRequired)
+                            {
+                                BeginInvoke(new Action(async () =>
+                                {
+                                    await HandleForceCompressAsync();
+                                }));
+                            }
+                            else
+                            {
+                                _ = HandleForceCompressAsync();
+                            }
                             break;
 
                         case "copyToWord":
@@ -368,6 +430,120 @@ namespace WordCopilotChat
             catch (Exception ex)
             {
                 Debug.WriteLine($"处理WebMessage时出错: {ex.Message}");
+            }
+        }
+
+        // 处理强制压缩请求
+        private async System.Threading.Tasks.Task HandleForceCompressAsync()
+        {
+            try
+            {
+                // 避免并发压缩
+                if (System.Threading.Interlocked.CompareExchange(ref _compressingFlag, 1, 0) != 0)
+                {
+                    Debug.WriteLine("强制压缩：已有压缩任务在进行中，忽略本次请求");
+                    return;
+                }
+
+                if (_currentModelConfig?.ContextLength.HasValue != true || _currentModelConfig.ContextLength.Value <= 0)
+                {
+                    Debug.WriteLine("强制压缩：当前模型未配置 context_length，无法执行");
+                    PostWebMessageSafe(JsonConvert.SerializeObject(new { type = "showError", message = "当前模型未配置上下文长度，无法执行强制压缩。" }));
+                    return;
+                }
+
+                if (string.IsNullOrWhiteSpace(_currentApiUrl) || string.IsNullOrWhiteSpace(_currentApiKey) || string.IsNullOrWhiteSpace(_currentModelName))
+                {
+                    Debug.WriteLine("强制压缩：缺少最近一次模型请求信息（apiUrl/apiKey/modelName）");
+                    PostWebMessageSafe(JsonConvert.SerializeObject(new { type = "showError", message = "尚未进行过有效对话，无法执行强制压缩。请先发送一条消息。" }));
+                    return;
+                }
+
+                int contextLengthTokens = _currentModelConfig.ContextLength.Value * 1024;
+
+                // 通知前端开始压缩
+                var forceMsg = "正在强制压缩对话历史以节省Token...";
+                // 兼容性：部分情况下 WebMessage 会延迟/被吞，这里额外用 ExecuteScript 直接触发前端展示
+                try
+                {
+                    var forceMsgJs = JsonConvert.SerializeObject(forceMsg);
+                    await ExecuteScriptOnUIThreadAsync($"try{{showCompressionBanner({forceMsgJs}, 'info');setCompressionLock(true);}}catch(e){{}}");
+                }
+                catch { }
+                PostWebMessageSafe(JsonConvert.SerializeObject(new { type = "contextCompressing", message = forceMsg }));
+
+                System.Threading.Interlocked.Increment(ref _suppressUsageToFrontendCount);
+                try
+                {
+                    await CompressConversationHistory(_currentApiUrl, _currentApiKey, _currentModelName, contextLengthTokens);
+                }
+                finally
+                {
+                    System.Threading.Interlocked.Decrement(ref _suppressUsageToFrontendCount);
+                }
+
+                // 压缩完成后：主动推送一次“估算 usage”，让前端 Token 使用率立刻刷新（不依赖下一次模型回复）
+                SendEstimatedUsageToFrontend(_lastChatSystemPrompt, _currentModelConfig, _lastChatMaxTokens);
+
+                // 通知前端压缩完成（await 后可能在非 UI 线程）
+                try
+                {
+                    var doneMsg = "对话历史已压缩";
+                    var doneMsgJs = JsonConvert.SerializeObject(doneMsg);
+                    await ExecuteScriptOnUIThreadAsync($"try{{showCompressionBanner({doneMsgJs}, 'success', 1200);setCompressionLock(false);}}catch(e){{}}");
+                }
+                catch { }
+                PostWebMessageSafe(JsonConvert.SerializeObject(new { type = "contextCompressed", message = "对话历史已压缩" }));
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"强制压缩失败: {ex.Message}");
+                PostWebMessageSafe(JsonConvert.SerializeObject(new { type = "showError", message = $"强制压缩失败: {ex.Message}" }));
+            }
+            finally
+            {
+                System.Threading.Interlocked.Exchange(ref _compressingFlag, 0);
+            }
+        }
+
+        // 线程安全的 WebMessage 发送（自动切换到 UI 线程）
+        // 注意：CoreWebView2 的 getter 也要求在 UI 线程访问，因此不要在 UI 线程切换前读取 webView21.CoreWebView2
+        private void PostWebMessageSafe(string json)
+        {
+            if (!_webViewInitialized || webView21 == null)
+            {
+                return;
+            }
+
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(() =>
+                {
+                    try
+                    {
+                        if (_webViewInitialized && webView21.CoreWebView2 != null)
+                        {
+                            webView21.CoreWebView2.PostWebMessageAsJson(json);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"PostWebMessageSafe 出错: {ex.Message}");
+                    }
+                }));
+                return;
+            }
+
+            try
+            {
+                if (webView21.CoreWebView2 != null)
+                {
+                    webView21.CoreWebView2.PostWebMessageAsJson(json);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"PostWebMessageSafe 出错: {ex.Message}");
             }
         }
 
@@ -618,6 +794,13 @@ namespace WordCopilotChat
                     Debug.WriteLine("智能问答模式：已清空所有工具");
                 }
 
+                // 注意：已加载的Word文档内容现在会添加到系统提示词中，不再重复添加到每条用户消息
+                // 这样可以大幅节省Token（文档内容只出现在system里一次，而不是每条user消息都带上）
+                if (!string.IsNullOrEmpty(_loadedDocumentContent) && !_loadedDocumentContent.StartsWith("错误"))
+                {
+                    Debug.WriteLine($"检测到已加载的文档内容，字符数: {_loadedDocumentContent.Length}，将添加到系统提示词");
+                }
+
                 // 添加用户消息到历史记录（支持多模态）
                 AddUserMessageToHistory(message, images);
 
@@ -661,6 +844,10 @@ namespace WordCopilotChat
 
                     // 保存当前模型配置，用于后续的用户操作反馈对话
                     _currentModelConfig = modelConfig;
+                    // 保存最近一次对话请求信息，供“强制压缩”等操作复用
+                    _currentApiUrl = apiUrl;
+                    _currentApiKey = apiKey;
+                    _currentModelName = modelName;
 
                     Debug.WriteLine($"模型多模态支持: {(supportsMultimodal ? "是" : "否")}");
 
@@ -696,6 +883,16 @@ namespace WordCopilotChat
                 // 根据聊天模式调整系统提示词
                 string systemPrompt = GetSystemPromptByMode(chatMode, enabledTools, contexts);
 
+                // 获取AI参数：优先从模型配置中解析，其次从应用设置中获取
+                var (temperature, maxTokens, topP) = GetAIParameters(modelConfig, chatMode);
+
+                // 记录最近一次对话的系统提示词与 max_tokens，供压缩后刷新 Token 使用率
+                _lastChatSystemPrompt = systemPrompt;
+                _lastChatMaxTokens = maxTokens;
+
+                // 检查是否需要压缩对话历史（Token管理）
+                await CheckAndCompressHistoryIfNeeded(systemPrompt, modelConfig, maxTokens, apiUrl, apiKey, modelName);
+
                 // 构建消息数组，包含系统提示词和对话历史
                 JArray messages = new JArray();
 
@@ -711,9 +908,6 @@ namespace WordCopilotChat
                 {
                     messages.Add(historyMessage);
                 }
-
-                // 获取AI参数：优先从模型配置中解析，其次从应用设置中获取
-                var (temperature, maxTokens, topP) = GetAIParameters(modelConfig, chatMode);
 
                 // 构建请求的基础JSON对象
                 JObject baseObj = new JObject
@@ -760,8 +954,8 @@ namespace WordCopilotChat
                 _cancellationTokenSource?.Dispose(); // 释放资源
                 _cancellationTokenSource = new CancellationTokenSource();
 
-                // 通知前端开始生成
-                await webView21.ExecuteScriptAsync("startGeneratingOutline()");
+                // 通知前端开始生成（必须在UI线程访问WebView2）
+                await ExecuteScriptOnUIThreadAsync("startGeneratingOutline()");
 
                 // 收集生成的内容
                 StringBuilder responseContent = new StringBuilder();
@@ -1158,11 +1352,20 @@ namespace WordCopilotChat
             if (string.IsNullOrWhiteSpace(message))
                 return;
 
+            // 思维链不应进入后续对话上下文（节省Token、避免服务商不兼容）
+            var (cleanContent, think) = ExtractThinkAndCleanContent(message);
+
             var assistantMessage = new JObject
             {
                 ["role"] = "assistant",
-                ["content"] = message
+                ["content"] = cleanContent
             };
+
+            // 仅用于本地存储/日志，不发送给模型
+            if (!string.IsNullOrWhiteSpace(think))
+            {
+                assistantMessage["think"] = think;
+            }
 
             _conversationHistory.Add(assistantMessage);
 
@@ -1170,6 +1373,66 @@ namespace WordCopilotChat
             TrimConversationHistory();
 
             Debug.WriteLine($"添加助手消息到历史，当前历史数量: {_conversationHistory.Count}");
+        }
+
+        /// <summary>
+        /// 从模型输出中提取思维链（&lt;think&gt;...&lt;/think&gt;），并返回去除思维链后的正文内容
+        /// </summary>
+        private static (string content, string think) ExtractThinkAndCleanContent(string raw)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(raw)) return ("", "");
+
+                var thinkParts = new List<string>();
+
+                // 1) 提取已闭合的 <think>...</think>
+                try
+                {
+                    foreach (Match m in Regex.Matches(raw, @"<think>([\s\S]*?)</think>", RegexOptions.IgnoreCase))
+                    {
+                        if (m.Success && m.Groups.Count > 1)
+                        {
+                            var t = m.Groups[1]?.Value;
+                            if (!string.IsNullOrWhiteSpace(t)) thinkParts.Add(t.Trim());
+                        }
+                    }
+                }
+                catch { }
+
+                // 2) 移除闭合段
+                string cleaned = Regex.Replace(raw, @"<think>[\s\S]*?</think>", "", RegexOptions.IgnoreCase);
+
+                // 3) 处理未闭合的 <think>（兜底：把其后的内容作为 think）
+                int openIdx = cleaned.IndexOf("<think>", StringComparison.OrdinalIgnoreCase);
+                if (openIdx >= 0)
+                {
+                    string after = cleaned.Substring(openIdx + "<think>".Length);
+                    if (!string.IsNullOrWhiteSpace(after)) thinkParts.Add(after.Trim());
+                    cleaned = cleaned.Substring(0, openIdx);
+                }
+
+                // 4) 清理残留闭合标签
+                cleaned = Regex.Replace(cleaned, @"</think>", "", RegexOptions.IgnoreCase);
+
+                // 5) 工具卡片占位符属于UI层，不应进入后续对话上下文（节省Token/避免干扰模型）
+                cleaned = Regex.Replace(cleaned ?? "", @"<!--\s*TOOL_CARD_[^>]*-->", "", RegexOptions.IgnoreCase);
+                cleaned = Regex.Replace(cleaned ?? "", @"__TOOL_CARD_[^_]+__", "", RegexOptions.IgnoreCase);
+                cleaned = Regex.Replace(cleaned ?? "", @"\*\*TOOL_CARD_[^*]+\*\*", "", RegexOptions.IgnoreCase);
+
+                string think = string.Join("\n\n", thinkParts.Where(x => !string.IsNullOrWhiteSpace(x)));
+                // think 仅用于本地日志/调试，也顺手去掉占位符
+                think = Regex.Replace(think ?? "", @"<!--\s*TOOL_CARD_[^>]*-->", "", RegexOptions.IgnoreCase);
+                think = Regex.Replace(think ?? "", @"__TOOL_CARD_[^_]+__", "", RegexOptions.IgnoreCase);
+                think = Regex.Replace(think ?? "", @"\*\*TOOL_CARD_[^*]+\*\*", "", RegexOptions.IgnoreCase);
+
+                return ((cleaned ?? "").Trim(), (think ?? "").Trim());
+            }
+            catch
+            {
+                // 出错时不影响主流程：宁可不提取也不要丢正文
+                return ((raw ?? "").Trim(), "");
+            }
         }
 
         // 修剪对话历史，保持在最大数量限制内
@@ -1208,7 +1471,972 @@ namespace WordCopilotChat
         public void ClearConversationHistory()
         {
             _conversationHistory.Clear();
+            _lastUsagePayload = null;
+            System.Threading.Interlocked.Exchange(ref _suppressUsageToFrontendCount, 0);
             Debug.WriteLine("对话历史已清空");
+
+            // 通知前端清空 token 显示
+            try
+            {
+                if (_webViewInitialized && webView21?.CoreWebView2 != null)
+                {
+                    var msg = new
+                    {
+                        type = "usageClear",
+                        timestamp = DateTime.Now.ToString("HH:mm:ss.fff")
+                    };
+                    string json = JsonConvert.SerializeObject(msg);
+                    PostWebMessageAsJsonOnUIThread(json);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"清空token显示通知失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 处理加载文档内容的请求
+        /// </summary>
+        private async void HandleLoadDocument()
+        {
+            try
+            {
+                // 若已加载，则视为“再次点击=卸载”
+                if (!string.IsNullOrEmpty(_loadedDocumentContent) && !_loadedDocumentContent.StartsWith("错误"))
+                {
+                    UnloadDocument();
+                    return;
+                }
+
+                // 若正在加载，则视为忽略（前端会走 cancelLoadDocument）
+                if (_isLoadingDocument)
+                {
+                    Debug.WriteLine("文档加载已在进行中，忽略重复加载请求");
+                    return;
+                }
+
+                Debug.WriteLine("开始加载文档内容...");
+                _isLoadingDocument = true;
+
+                // 发送“loading”状态给前端（对齐按钮提示）
+                SendDocumentLoadStateMessage("loading", message: "正在加载文档...");
+
+                // 在后台线程中读取文档内容
+                string documentContent = null;
+                DateTime loadTime = DateTime.MinValue;
+
+                // 准备取消令牌与操作序号
+                int opId = System.Threading.Interlocked.Increment(ref _loadDocumentOpId);
+                try { _loadDocumentCancellationTokenSource?.Cancel(); } catch { }
+                try { _loadDocumentCancellationTokenSource?.Dispose(); } catch { }
+                _loadDocumentCancellationTokenSource = new CancellationTokenSource();
+                var token = _loadDocumentCancellationTokenSource.Token;
+
+                await TaskAsync.Run(() =>
+                {
+                    // 若已取消则尽早退出（注意：WordTools 内部不可中断，这里只能“尽早不开始”）
+                    token.ThrowIfCancellationRequested();
+                    documentContent = WordTools.GetFullDocumentContent(50000); // 限制最大50000字符
+                    loadTime = DateTime.Now;
+                }, token);
+
+                // 若用户取消或已有更新的加载操作，则丢弃本次结果
+                if (token.IsCancellationRequested || opId != _loadDocumentOpId)
+                {
+                    Debug.WriteLine("文档加载结果已过期或已取消，丢弃本次结果");
+                    _isLoadingDocument = false;
+                    return;
+                }
+
+                // 保存到实例变量（需要在UI线程）
+                _loadedDocumentContent = documentContent;
+                _documentLoadedTime = loadTime;
+                _isLoadingDocument = false;
+
+                // 统计文档信息
+                int charCount = _loadedDocumentContent?.Length ?? 0;
+                bool success = !string.IsNullOrEmpty(_loadedDocumentContent) && !_loadedDocumentContent.StartsWith("错误");
+
+                Debug.WriteLine($"文档内容加载完成，字符数: {charCount}");
+
+                // 切换回UI线程发送消息
+                if (InvokeRequired)
+                {
+                    Invoke(new Action(() =>
+                    {
+                        SendDocumentLoadedMessage(success, charCount, _documentLoadedTime, _loadedDocumentContent);
+                    }));
+                }
+                else
+                {
+                    SendDocumentLoadedMessage(success, charCount, _documentLoadedTime, _loadedDocumentContent);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                Debug.WriteLine("加载文档内容已取消");
+                _isLoadingDocument = false;
+                // 取消时由 CancelLoadDocument 主动通知前端，这里不重复提示
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"加载文档内容失败: {ex.Message}");
+                _isLoadingDocument = false;
+
+                // 切换回UI线程发送错误消息
+                if (InvokeRequired)
+                {
+                    Invoke(new Action(() =>
+                    {
+                        SendDocumentLoadedErrorMessage(ex.Message);
+                    }));
+                }
+                else
+                {
+                    SendDocumentLoadedErrorMessage(ex.Message);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 取消加载文档（并清空已加载内容）
+        /// </summary>
+        private void CancelLoadDocument()
+        {
+            try
+            {
+                // 递增操作序号，确保旧任务完成后结果会被丢弃
+                System.Threading.Interlocked.Increment(ref _loadDocumentOpId);
+                _isLoadingDocument = false;
+                try { _loadDocumentCancellationTokenSource?.Cancel(); } catch { }
+
+                _loadedDocumentContent = null;
+                _documentLoadedTime = DateTime.MinValue;
+
+                SendDocumentLoadStateMessage("cancelled", message: "已取消加载文档");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"CancelLoadDocument 失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 卸载已加载的文档内容（清空上下文）
+        /// </summary>
+        private void UnloadDocument()
+        {
+            try
+            {
+                // 同时取消可能进行中的加载
+                System.Threading.Interlocked.Increment(ref _loadDocumentOpId);
+                _isLoadingDocument = false;
+                try { _loadDocumentCancellationTokenSource?.Cancel(); } catch { }
+
+                _loadedDocumentContent = null;
+                _documentLoadedTime = DateTime.MinValue;
+
+                SendDocumentLoadStateMessage("unloaded", message: "已取消加载文档（已清空已加载内容）");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"UnloadDocument 失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 发送文档加载成功消息（必须在UI线程调用）
+        /// </summary>
+        private void SendDocumentLoadedMessage(bool success, int charCount, DateTime loadTime, string documentContent)
+        {
+            try
+            {
+                if (_webViewInitialized && webView21?.CoreWebView2 != null)
+                {
+                    var msg = new
+                    {
+                        type = "documentLoaded",
+                        state = success ? "loaded" : "error",
+                        success = success,
+                        charCount = charCount,
+                        loadTime = loadTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                        message = success ? $"文档已加载（{charCount} 字符）" : documentContent
+                    };
+                    string json = JsonConvert.SerializeObject(msg);
+                    PostWebMessageAsJsonOnUIThread(json);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"发送文档加载消息失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 发送文档加载错误消息（必须在UI线程调用）
+        /// </summary>
+        private void SendDocumentLoadedErrorMessage(string errorMessage)
+        {
+            try
+            {
+                if (_webViewInitialized && webView21?.CoreWebView2 != null)
+                {
+                    var msg = new
+                    {
+                        type = "documentLoaded",
+                        state = "error",
+                        success = false,
+                        message = $"加载失败: {errorMessage}"
+                    };
+                    string json = JsonConvert.SerializeObject(msg);
+                    PostWebMessageAsJsonOnUIThread(json);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"发送文档加载错误消息失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 向前端发送文档加载状态（loading/cancelled/unloaded）
+        /// </summary>
+        private void SendDocumentLoadStateMessage(string state, string message = null)
+        {
+            try
+            {
+                if (!_webViewInitialized || webView21?.CoreWebView2 == null) return;
+                var msg = new
+                {
+                    type = "documentLoaded",
+                    state = state,
+                    success = state == "loaded",
+                    message = message ?? ""
+                };
+                string json = JsonConvert.SerializeObject(msg);
+                PostWebMessageAsJsonOnUIThread(json);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"发送文档加载状态失败: {ex.Message}");
+            }
+        }
+
+        // Token估算（简单粗略估算：中文约1.5字符/token，英文约4字符/token）
+        private int EstimateTokenCount(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return 0;
+
+            // 统计中文字符和非中文字符
+            int chineseCount = 0;
+            int otherCount = 0;
+
+            foreach (char c in text)
+            {
+                if (c >= 0x4E00 && c <= 0x9FFF) // 中文字符范围
+                {
+                    chineseCount++;
+                }
+                else
+                {
+                    otherCount++;
+                }
+            }
+
+            // 中文约1.5字符/token，英文约4字符/token
+            int estimatedTokens = (int)(chineseCount / 1.5) + (int)(otherCount / 4.0);
+            return Math.Max(1, estimatedTokens); // 至少返回1
+        }
+
+        // 估算整个对话历史的Token数
+        private int EstimateHistoryTokens()
+        {
+            int total = 0;
+            foreach (var msg in _conversationHistory)
+            {
+                string content = msg["content"]?.ToString() ?? "";
+                total += EstimateTokenCount(content);
+
+                // 如果有tool_calls，也要计算其Token
+                var toolCalls = msg["tool_calls"] as JArray;
+                if (toolCalls != null)
+                {
+                    foreach (var tc in toolCalls)
+                    {
+                        string args = tc["function"]?["arguments"]?.ToString() ?? "";
+                        total += EstimateTokenCount(args);
+                    }
+                }
+            }
+            return total;
+        }
+
+        /// <summary>
+        /// 压缩后向前端推送“估算 usage”，用于刷新 Token 使用率显示。
+        /// 说明：压缩属于内部请求，压缩请求本身的 usage 会被 suppress；压缩完成后需要补一次“对当前会话上下文的估算”。
+        /// </summary>
+        private void SendEstimatedUsageToFrontend(string systemPrompt, Model modelConfig, int? maxTokens)
+        {
+            try
+            {
+                if (modelConfig?.ContextLength.HasValue != true || modelConfig.ContextLength.Value <= 0)
+                {
+                    return;
+                }
+
+                int contextLengthTokens = modelConfig.ContextLength.Value * 1024;
+                int systemTokens = EstimateTokenCount(systemPrompt ?? "");
+                int historyTokens = EstimateHistoryTokens();
+                int promptTokens = systemTokens + historyTokens;
+
+                var messageData = new
+                {
+                    type = "usage",
+                    prompt_tokens = promptTokens,
+                    completion_tokens = 0,
+                    total_tokens = promptTokens,
+                    max_tokens = maxTokens,
+                    context_length = contextLengthTokens,
+                    used_for_max_tokens = 0,
+                    remaining_tokens = (int?)null,
+                    estimated = true,
+                    timestamp = DateTime.Now.ToString("HH:mm:ss.fff")
+                };
+
+                PostWebMessageSafe(JsonConvert.SerializeObject(messageData));
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"SendEstimatedUsageToFrontend 出错: {ex.Message}");
+            }
+        }
+
+        // 检查并在需要时压缩对话历史
+        private async System.Threading.Tasks.Task CheckAndCompressHistoryIfNeeded(string systemPrompt, Model modelConfig, int? maxTokens, string apiUrl, string apiKey, string modelName)
+        {
+            try
+            {
+                // 1. 检查模型是否配置了上下文长度
+                if (!modelConfig.ContextLength.HasValue || modelConfig.ContextLength.Value <= 0)
+                {
+                    Debug.WriteLine("模型未配置上下文长度（ContextLength），跳过自动压缩");
+                    return;
+                }
+
+                // 2. 历史记录太少也跳过压缩（至少要有2条消息：1用户+1助手）
+                if (_conversationHistory.Count < 2)
+                {
+                    return;
+                }
+
+                // 3. 计算上下文长度（单位转换：k -> tokens）
+                int contextLengthTokens = modelConfig.ContextLength.Value * 1024;
+
+                // 3.1 优先参考上一轮真实 usage（尤其是 Agent 模式包含 tools schema 时，本地估算会明显偏小）
+                // 注意：usage 来自上一轮模型回复，total_tokens 通常包含 prompt+completion，作为保守判断可直接使用
+                int? lastTotalTokens = null;
+                try
+                {
+                    lastTotalTokens = _lastUsagePayload?["total_tokens"]?.ToObject<int?>();
+                }
+                catch { }
+
+                // 4. 估算当前Token使用量
+                int systemTokens = EstimateTokenCount(systemPrompt);
+                int historyTokens = EstimateHistoryTokens();
+                int reservedOutputTokens = maxTokens ?? 2000; // 为输出预留空间（默认2000）
+                int totalEstimated = systemTokens + historyTokens + reservedOutputTokens;
+
+                // 留出安全边界：当估算的输入Token超过阈值比例时触发压缩（阈值可在“默认AI参数设置”里配置）
+                var thresholdPct = _appSettingsService?.GetIntSetting("context_compress_threshold_pct", 70) ?? 70;
+                // 容错：限制区间[50%, 90%]
+                if (thresholdPct < 50) thresholdPct = 50;
+                if (thresholdPct > 90) thresholdPct = 90;
+                double threshold = contextLengthTokens * (thresholdPct / 100.0);
+
+                Debug.WriteLine($"🔍 Token估算 - 系统提示词: {systemTokens}, 历史对话: {historyTokens}, 预留输出: {reservedOutputTokens}, 总计: {totalEstimated}");
+                Debug.WriteLine($"📊 上下文限制: {contextLengthTokens} tokens ({modelConfig.ContextLength}k), 阈值: {threshold:F0}（{thresholdPct}%）");
+                if (lastTotalTokens.HasValue)
+                {
+                    Debug.WriteLine($"📌 上一轮真实 usage.total_tokens: {lastTotalTokens.Value}（用于辅助判断自动压缩）");
+                }
+
+                // 同步写入 openai_usage 日志（便于复盘“为什么触发压缩/阈值是多少”）
+                try
+                {
+                    var debugLine1 = $"🔍 Token估算 - 系统提示词: {systemTokens}, 历史对话: {historyTokens}, 预留输出: {reservedOutputTokens}, 总计: {totalEstimated}";
+                    var debugLine2 = $"📊 上下文限制: {contextLengthTokens} tokens ({modelConfig.ContextLength}k), 阈值: {threshold:F0}（{thresholdPct}%）";
+
+                    OpenAIUtils.LogUsageDebug(
+                        "context_compress_check",
+                        new JObject
+                        {
+                            ["model"] = modelName,
+                            ["context_length_k"] = modelConfig.ContextLength,
+                            ["context_length_tokens"] = contextLengthTokens,
+                            ["threshold_pct"] = thresholdPct,
+                            ["threshold_tokens"] = (int)Math.Round(threshold),
+                            ["system_tokens_est"] = systemTokens,
+                            ["history_tokens_est"] = historyTokens,
+                            ["reserved_output_tokens"] = reservedOutputTokens,
+                            ["total_estimated_tokens"] = totalEstimated,
+                            ["would_trigger"] = totalEstimated > threshold,
+                            ["line1"] = debugLine1,
+                            ["line2"] = debugLine2
+                        });
+                }
+                catch { }
+
+                // 触发条件：
+                // - 若上一轮真实 total_tokens 已超过阈值，则优先触发（避免 Agent/tools 导致的估算偏差漏触发）
+                // - 否则使用本地估算进行判断
+                bool wouldTriggerByLastUsage = lastTotalTokens.HasValue && lastTotalTokens.Value > threshold;
+                if (wouldTriggerByLastUsage || totalEstimated > threshold)
+                {
+                    Debug.WriteLine($"⚠️ Token即将超限，触发自动压缩");
+                    Debug.WriteLine($"   当前: {totalEstimated} tokens, 阈值: {threshold:F0} tokens, 上下文窗口: {contextLengthTokens} tokens");
+
+                    // 通知前端开始压缩
+                    var bannerMsg = "对话历史较长，正在自动压缩以节省Token...";
+                    var notifyData = new
+                    {
+                        type = "contextCompressing",
+                        message = bannerMsg
+                    };
+                    // 兼容性：部分情况下 WebMessage 会延迟/被吞，这里额外用 ExecuteScript 直接触发前端展示
+                    try
+                    {
+                        var bannerMsgJs = JsonConvert.SerializeObject(bannerMsg);
+                        await ExecuteScriptOnUIThreadAsync($"try{{showCompressionBanner({bannerMsgJs}, 'info');setCompressionLock(true);}}catch(e){{}}");
+                    }
+                    catch { }
+                    PostWebMessageSafe(JsonConvert.SerializeObject(notifyData));
+                    // 压缩属于内部请求：为了避免 Token 显示“跳变”，压缩期间不向前端推送 usage（但仍会在VS输出中记录）
+                    System.Threading.Interlocked.Increment(ref _suppressUsageToFrontendCount);
+                    try
+                    {
+                        await CompressConversationHistory(apiUrl, apiKey, modelName, contextLengthTokens);
+                    }
+                    finally
+                    {
+                        System.Threading.Interlocked.Decrement(ref _suppressUsageToFrontendCount);
+                    }
+
+                    // 压缩完成后：推送一次“估算 usage”，让前端 Token 使用率立刻刷新
+                    SendEstimatedUsageToFrontend(systemPrompt, modelConfig, maxTokens);
+
+                    // 通知前端压缩完成（await 后可能在非 UI 线程）
+                    try
+                    {
+                        var doneMsg = "对话历史已压缩";
+                        var doneMsgJs = JsonConvert.SerializeObject(doneMsg);
+                        await ExecuteScriptOnUIThreadAsync($"try{{showCompressionBanner({doneMsgJs}, 'success', 1200);setCompressionLock(false);}}catch(e){{}}");
+                    }
+                    catch { }
+                    var completeData = new
+                    {
+                        type = "contextCompressed",
+                        message = "对话历史已压缩",
+                        originalCount = _conversationHistory.Count
+                    };
+                    PostWebMessageSafe(JsonConvert.SerializeObject(completeData));
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"检查和压缩对话历史时出错: {ex.Message}");
+                // 压缩失败不应阻止正常对话，仅记录日志
+            }
+        }
+
+        /// <summary>
+        /// 在 UI 线程执行 WebView2 ExecuteScriptAsync
+        /// </summary>
+        private System.Threading.Tasks.Task<string> ExecuteScriptOnUIThreadAsync(string script)
+        {
+            try
+            {
+                if (!_webViewInitialized || webView21 == null)
+                {
+                    return System.Threading.Tasks.Task.FromResult<string>(null);
+                }
+
+                if (InvokeRequired)
+                {
+                    var tcs = new System.Threading.Tasks.TaskCompletionSource<string>();
+                    BeginInvoke(new Action(async () =>
+                    {
+                        try
+                        {
+                            var result = await webView21.ExecuteScriptAsync(script);
+                            tcs.TrySetResult(result);
+                        }
+                        catch (Exception ex)
+                        {
+                            tcs.TrySetException(ex);
+                        }
+                    }));
+                    return tcs.Task;
+                }
+
+                return webView21.ExecuteScriptAsync(script);
+            }
+            catch (Exception ex)
+            {
+                return System.Threading.Tasks.Task.FromException<string>(ex);
+            }
+        }
+
+        /// <summary>
+        /// 在 UI 线程发送 PostWebMessageAsJson（CoreWebView2 只能在 UI 线程访问）
+        /// </summary>
+        private void PostWebMessageAsJsonOnUIThread(string json)
+        {
+            // 统一走线程安全实现（避免在非 UI 线程提前读取 CoreWebView2）
+            PostWebMessageSafe(json);
+        }
+
+        // 压缩对话历史
+        private async System.Threading.Tasks.Task CompressConversationHistory(string apiUrl, string apiKey, string modelName, int contextLengthTokens = 0)
+        {
+            try
+            {
+                if (_conversationHistory.Count < 2)
+                {
+                    Debug.WriteLine("对话历史太短，无需压缩");
+                    return;
+                }
+
+                // 获取压缩提示词
+                var compressPrompt = PromptService.GetPrompt("compress-context");
+                if (string.IsNullOrEmpty(compressPrompt))
+                {
+                    Debug.WriteLine("未找到压缩提示词，跳过压缩");
+                    return;
+                }
+
+                // 保留最近的1条用户消息（当前提问），其余的全部进行压缩
+                // 原因：如果保留"用户+助手"对，上一轮的助手回复会不断累积而不被压缩
+                var recentMessages = new List<JObject>();
+                var oldMessages = new List<JObject>();
+
+                // 从后往前找，保留最后1条用户消息
+                for (int i = _conversationHistory.Count - 1; i >= 0; i--)
+                {
+                    var msg = _conversationHistory[i];
+                    string role = msg["role"]?.ToString() ?? "";
+
+                    if (role == "user" && recentMessages.Count == 0)
+                    {
+                        // 找到最后一条用户消息，保留它
+                        recentMessages.Insert(0, msg);
+                        // 之前的所有消息都需要压缩
+                        for (int j = 0; j < i; j++)
+                        {
+                            oldMessages.Add(_conversationHistory[j]);
+                        }
+                        break;
+                    }
+                }
+
+                if (oldMessages.Count == 0)
+                {
+                    Debug.WriteLine("没有需要压缩的历史记录");
+                    return;
+                }
+
+                // 构建压缩请求的对话历史文本
+                StringBuilder historyText = new StringBuilder();
+                foreach (var msg in oldMessages)
+                {
+                    string role = msg["role"]?.ToString() ?? "unknown";
+                    string content = msg["content"]?.ToString() ?? "";
+
+                    if (role == "user")
+                    {
+                        historyText.AppendLine($"[用户]: {content}");
+                    }
+                    else if (role == "assistant")
+                    {
+                        // 保留助手的文本回复
+                        if (!string.IsNullOrEmpty(content))
+                        {
+                            historyText.AppendLine($"[助手]: {content}");
+                        }
+
+                        // 处理工具调用请求（Agent模式的核心）
+                        var toolCalls = msg["tool_calls"] as JArray;
+                        if (toolCalls != null && toolCalls.Count > 0)
+                        {
+                            historyText.AppendLine("[工具调用请求]:");
+                            foreach (var tc in toolCalls)
+                            {
+                                string toolName = tc["function"]?["name"]?.ToString() ?? "未知工具";
+                                string toolArgs = tc["function"]?["arguments"]?.ToString() ?? "{}";
+
+                                // 根据工具类型决定保留多少参数信息
+                                if (IsImportantToolForHistory(toolName))
+                                {
+                                    // 重要工具（如编辑类工具）保留完整参数摘要
+                                    historyText.AppendLine($"  - 工具: {toolName}");
+                                    historyText.AppendLine($"    参数: {FormatToolArgumentsForHistory(toolName, toolArgs)}");
+                                }
+                                else
+                                {
+                                    // 查询类工具只保留工具名和关键参数
+                                    historyText.AppendLine($"  - 工具: {toolName} {FormatToolArgumentsForHistory(toolName, toolArgs)}");
+                                }
+                            }
+                        }
+                    }
+                    else if (role == "tool")
+                    {
+                        // 根据工具名和内容长度智能截断
+                        string toolName = msg["name"]?.ToString() ?? "未知工具";
+
+                        // 重要工具保留更多信息
+                        int maxLength = IsImportantToolForHistory(toolName) ? 1500 : 500;
+
+                        if (content.Length <= maxLength)
+                        {
+                            historyText.AppendLine($"[工具执行结果 - {toolName}]:");
+                            historyText.AppendLine(content);
+                        }
+                        else
+                        {
+                            // 尝试智能提取关键信息
+                            string summary = ExtractToolResultSummary(toolName, content, maxLength);
+                            historyText.AppendLine($"[工具执行结果 - {toolName}]:");
+                            historyText.AppendLine(summary);
+                            historyText.AppendLine($"(原始结果长度: {content.Length} 字符，已提取关键信息)");
+                        }
+                    }
+                    historyText.AppendLine();
+                }
+
+                // 动态计算压缩摘要的 max_tokens（根据上下文窗口大小）
+                // 规则：按上下文窗口的 20%~30% 取值（与compress-context提示词一致），并限制范围避免过小/过大
+                int compressMaxTokens = 2000; // 默认值（无 context_length 时）
+                if (contextLengthTokens > 0)
+                {
+                    // 小窗口（≤8k）按30%，中窗口（8k-32k）按25%，大窗口（>32k）按20%
+                    double ratio = contextLengthTokens <= 8 * 1024 ? 0.30
+                                 : contextLengthTokens <= 32 * 1024 ? 0.25
+                                 : 0.20;
+                    compressMaxTokens = (int)(contextLengthTokens * ratio);
+                    // 兜底：压缩摘要不能太短（中文文档更容易丢信息），也不能无限膨胀导致成本/失败
+                    compressMaxTokens = Math.Max(1000, Math.Min(20000, compressMaxTokens));
+                }
+                Debug.WriteLine($"压缩摘要 max_tokens: {compressMaxTokens}（上下文窗口: {contextLengthTokens}, 比例: {(compressMaxTokens * 100.0 / Math.Max(1, contextLengthTokens)):F1}%）");
+
+                // 构建压缩请求
+                var compressMessages = new JArray
+                {
+                    new JObject
+                    {
+                        ["role"] = "system",
+                        ["content"] = compressPrompt
+                    },
+                    new JObject
+                    {
+                        ["role"] = "user",
+                        ["content"] = historyText.ToString()
+                    }
+                };
+
+                var compressRequest = new JObject
+                {
+                    ["model"] = modelName,
+                    ["messages"] = compressMessages,
+                    ["stream"] = false, // 压缩使用非流式，快速获取结果
+                    ["temperature"] = 0.3, // 低温度确保压缩稳定
+                    ["max_tokens"] = compressMaxTokens // 动态计算的压缩长度
+                };
+
+                Debug.WriteLine("开始调用AI压缩对话历史...");
+
+                // 同步等待压缩结果
+                StringBuilder compressedContent = new StringBuilder();
+                var compressCts = new CancellationTokenSource();
+                compressCts.CancelAfter(TimeSpan.FromSeconds(30)); // 30秒超时
+
+                await OpenAIUtils.OpenAIApiClientAsync(apiUrl, apiKey, compressRequest.ToString(), compressCts.Token,
+                    content => compressedContent.Append(content));
+
+                string compressed = compressedContent.ToString();
+
+                if (!string.IsNullOrEmpty(compressed))
+                {
+                    Debug.WriteLine($"压缩完成，原始记录数: {oldMessages.Count}, 压缩后长度: {compressed.Length}");
+
+                    // 替换历史记录：用压缩摘要 + 最近2轮
+                    _conversationHistory.Clear();
+
+                    // 添加压缩后的摘要（作为助手消息）
+                    _conversationHistory.Add(new JObject
+                    {
+                        ["role"] = "assistant",
+                        ["content"] = $"【历史对话摘要】\n{compressed}"
+                    });
+
+                    // 添加最近的对话
+                    foreach (var msg in recentMessages)
+                    {
+                        _conversationHistory.Add(msg);
+                    }
+
+                    Debug.WriteLine($"对话历史已压缩，当前记录数: {_conversationHistory.Count}");
+                }
+                else
+                {
+                    Debug.WriteLine("压缩结果为空，保持原历史记录");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"压缩对话历史失败: {ex.Message}");
+                // 失败时不影响主流程，保持原历史记录
+            }
+        }
+
+        /// <summary>
+        /// 判断是否是重要工具（需要在压缩历史中保留完整信息）
+        /// </summary>
+        private bool IsImportantToolForHistory(string toolName)
+        {
+            // 编辑类工具：这些工具会修改文档，必须保留完整操作记录
+            var editingTools = new HashSet<string>
+            {
+                "formatted_insert_content",    // 格式化插入内容
+                "modify_text_style",            // 修改文字样式
+                "insert_text_at_cursor",        // 光标处插入文本
+                "find_and_replace"              // 查找替换
+            };
+
+            // 重要查询类工具：这些查询结果会影响后续操作
+            var importantQueryTools = new HashSet<string>
+            {
+                "get_heading_content",          // 获取标题内容
+                "get_selected_text",            // 获取选中文本
+                "check_insert_position"         // 检查插入位置
+            };
+
+            return editingTools.Contains(toolName) || importantQueryTools.Contains(toolName);
+        }
+
+        /// <summary>
+        /// 格式化工具参数为易读的历史记录格式
+        /// </summary>
+        private string FormatToolArgumentsForHistory(string toolName, string argsJson)
+        {
+            try
+            {
+                var args = JObject.Parse(argsJson);
+
+                switch (toolName)
+                {
+                    case "formatted_insert_content":
+                        {
+                            string targetHeading = args["target_heading"]?.ToString() ?? "未指定";
+                            string position = args["position"]?.ToString() ?? "end";
+                            string content = args["content"]?.ToString() ?? "";
+                            int contentLength = content.Length;
+
+                            // 提取内容主题（前100字符）
+                            string contentPreview = contentLength > 0
+                                ? content.Substring(0, Math.Min(100, contentLength)).Replace("\n", " ").Replace("\r", "")
+                                : "空内容";
+
+                            return $"目标标题=\"{targetHeading}\", 插入位置={position}, 内容长度={contentLength}字符, 内容预览=\"{contentPreview}...\"";
+                        }
+
+                    case "modify_text_style":
+                        {
+                            string findText = args["find_text"]?.ToString() ?? "";
+                            var styleChanges = args["style_changes"];
+
+                            string styleDesc = "未指定";
+                            if (styleChanges != null)
+                            {
+                                var styles = new List<string>();
+                                if (styleChanges["font_name"] != null) styles.Add($"字体={styleChanges["font_name"]}");
+                                if (styleChanges["font_size"] != null) styles.Add($"字号={styleChanges["font_size"]}");
+                                if (styleChanges["font_color"] != null) styles.Add($"颜色={styleChanges["font_color"]}");
+                                if (styleChanges["bold"] != null) styles.Add($"加粗={styleChanges["bold"]}");
+                                if (styleChanges["italic"] != null) styles.Add($"斜体={styleChanges["italic"]}");
+                                styleDesc = string.Join(", ", styles);
+                            }
+
+                            return $"查找文本=\"{findText}\", 样式修改=[{styleDesc}]";
+                        }
+
+                    case "insert_text_at_cursor":
+                        {
+                            string text = args["text"]?.ToString() ?? "";
+                            return $"插入文本=\"{text.Substring(0, Math.Min(100, text.Length))}...\"";
+                        }
+
+                    case "find_and_replace":
+                        {
+                            string find = args["find_text"]?.ToString() ?? "";
+                            string replace = args["replace_text"]?.ToString() ?? "";
+                            return $"查找=\"{find}\", 替换为=\"{replace}\"";
+                        }
+
+                    case "get_heading_content":
+                        {
+                            string heading = args["heading_text"]?.ToString() ?? "";
+                            return $"标题=\"{heading}\"";
+                        }
+
+                    case "get_document_headings":
+                        {
+                            int page = args["page"]?.ToObject<int>() ?? 1;
+                            int pageSize = args["page_size"]?.ToObject<int>() ?? 50;
+                            return $"分页={page}, 每页={pageSize}条";
+                        }
+
+                    case "get_selected_text":
+                    case "get_document_statistics":
+                    case "get_document_structure":
+                        // 这些工具没有关键参数，只返回工具名即可
+                        return "";
+
+                    default:
+                        // 其他工具：返回精简的JSON（不超过150字符）
+                        string jsonStr = args.ToString(Formatting.None);
+                        return jsonStr.Length > 150
+                            ? jsonStr.Substring(0, 150) + "..."
+                            : jsonStr;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"格式化工具参数失败: {ex.Message}");
+                return argsJson.Length > 100
+                    ? argsJson.Substring(0, 100) + "..."
+                    : argsJson;
+            }
+        }
+
+        /// <summary>
+        /// 从工具执行结果中提取摘要信息
+        /// </summary>
+        private string ExtractToolResultSummary(string toolName, string content, int maxLength)
+        {
+            try
+            {
+                // 尝试解析为JSON
+                var result = JObject.Parse(content);
+                var summary = new StringBuilder();
+
+                // 提取通用字段
+                if (result["success"] != null)
+                {
+                    bool success = result["success"].ToObject<bool>();
+                    summary.AppendLine($"执行状态: {(success ? "✅ 成功" : "❌ 失败")}");
+                }
+
+                if (result["message"] != null)
+                {
+                    summary.AppendLine($"消息: {result["message"]}");
+                }
+
+                // 根据工具类型提取特定字段
+                switch (toolName)
+                {
+                    case "formatted_insert_content":
+                        if (result["target_heading"] != null)
+                            summary.AppendLine($"目标标题: {result["target_heading"]}");
+                        if (result["position"] != null)
+                            summary.AppendLine($"插入位置: {result["position"]}");
+                        if (result["inserted_content_length"] != null)
+                            summary.AppendLine($"插入内容长度: {result["inserted_content_length"]} 字符");
+
+                        // 保留内容预览
+                        string previewContent = result["preview_content"]?.ToString()
+                                             ?? result["original_content"]?.ToString()
+                                             ?? result["content"]?.ToString();
+                        if (!string.IsNullOrEmpty(previewContent))
+                        {
+                            string preview = previewContent.Substring(0, Math.Min(300, previewContent.Length))
+                                .Replace("\n", " ").Replace("\r", "");
+                            summary.AppendLine($"内容预览: {preview}...");
+                        }
+                        break;
+
+                    case "modify_text_style":
+                        if (result["find_text"] != null)
+                            summary.AppendLine($"目标文本: {result["find_text"]}");
+                        if (result["style_parameters"] != null)
+                            summary.AppendLine($"样式参数: {result["style_parameters"]}");
+                        if (result["preview_styles"] != null)
+                            summary.AppendLine($"样式预览: {result["preview_styles"]}");
+                        break;
+
+                    case "get_heading_content":
+                        if (result["heading_text"] != null)
+                            summary.AppendLine($"标题: {result["heading_text"]}");
+                        if (result["content_length"] != null)
+                            summary.AppendLine($"内容长度: {result["content_length"]} 字符");
+
+                        // 保留部分内容
+                        string headingContent = result["content"]?.ToString();
+                        if (!string.IsNullOrEmpty(headingContent))
+                        {
+                            string contentPreview = headingContent.Substring(0, Math.Min(400, headingContent.Length));
+                            summary.AppendLine($"内容摘要: {contentPreview}...");
+                        }
+                        break;
+
+                    case "get_document_headings":
+                        if (result["total_count"] != null)
+                            summary.AppendLine($"标题总数: {result["total_count"]}");
+                        if (result["page"] != null && result["page_size"] != null)
+                            summary.AppendLine($"当前页: 第{result["page"]}页, 每页{result["page_size"]}条");
+
+                        // 列出前几个标题
+                        var headings = result["headings"] as JArray;
+                        if (headings != null && headings.Count > 0)
+                        {
+                            summary.AppendLine("标题列表（前5个）:");
+                            int count = Math.Min(5, headings.Count);
+                            for (int i = 0; i < count; i++)
+                            {
+                                var h = headings[i];
+                                summary.AppendLine($"  - [{h["level"]}] {h["text"]}");
+                            }
+                        }
+                        break;
+
+                    case "get_document_statistics":
+                        if (result["page_count"] != null)
+                            summary.AppendLine($"页数: {result["page_count"]}");
+                        if (result["word_count"] != null)
+                            summary.AppendLine($"字数: {result["word_count"]}");
+                        if (result["paragraph_count"] != null)
+                            summary.AppendLine($"段落数: {result["paragraph_count"]}");
+                        break;
+
+                    default:
+                        // 其他工具：保留完整JSON（如果不超过限制）
+                        if (content.Length <= maxLength)
+                            return content;
+                        break;
+                }
+
+                return summary.ToString().TrimEnd();
+            }
+            catch
+            {
+                // 如果不是JSON或解析失败，直接截断原文
+                string truncated = content.Substring(0, Math.Min(maxLength, content.Length));
+                if (content.Length > maxLength)
+                    truncated += "\n...(内容已截断)";
+                return truncated;
+            }
         }
 
         // 处理Mermaid图片插入
@@ -1225,13 +2453,14 @@ namespace WordCopilotChat
 
                 // 获取图片数据
                 string imageData = jsonObject["imageData"]?.ToString();
+                string svgData = jsonObject["svgData"]?.ToString();
                 string mermaidCode = jsonObject["mermaidCode"]?.ToString();
                 int width = jsonObject["width"]?.ToObject<int>() ?? 400;
                 int height = jsonObject["height"]?.ToObject<int>() ?? 300;
 
-                if (string.IsNullOrEmpty(imageData))
+                if (string.IsNullOrEmpty(imageData) && string.IsNullOrEmpty(svgData))
                 {
-                    Debug.WriteLine("图片数据为空");
+                    Debug.WriteLine("图片数据为空（PNG与SVG都为空）");
                     MessageBox.Show("图片数据为空，无法插入");
                     return;
                 }
@@ -1239,8 +2468,16 @@ namespace WordCopilotChat
                 Debug.WriteLine($"准备插入Mermaid图片，尺寸: {width}x{height}");
                 Debug.WriteLine($"Mermaid代码: {mermaidCode?.Substring(0, Math.Min(50, mermaidCode?.Length ?? 0))}...");
 
-                // 使用MarkdownToWord工具类插入图片
-                bool success = _markdownToWord.InsertMermaidImage(imageData, mermaidCode, width, height);
+                // 优先插入 SVG（Word 2016+ 为矢量，缩放清晰）；失败再回退 PNG
+                bool success = false;
+                if (!string.IsNullOrEmpty(svgData))
+                {
+                    success = _markdownToWord.InsertMermaidImageFromSvg(svgData, mermaidCode, width, height);
+                }
+                if (!success && !string.IsNullOrEmpty(imageData))
+                {
+                    success = _markdownToWord.InsertMermaidImage(imageData, mermaidCode, width, height);
+                }
 
                 if (success)
                 {
@@ -1356,6 +2593,14 @@ namespace WordCopilotChat
 
             // 构建上下文内容
             string contextContent = "";
+
+            // 如果有已加载的Word文档内容，优先添加到上下文（只在系统提示词中出现一次，节省Token）
+            if (!string.IsNullOrEmpty(_loadedDocumentContent) && !_loadedDocumentContent.StartsWith("错误"))
+            {
+                contextContent += "### 当前Word文档完整内容\n";
+                contextContent += _loadedDocumentContent + "\n\n";
+                Debug.WriteLine($"已将Word文档内容添加到系统提示词，字符数: {_loadedDocumentContent.Length}");
+            }
             if (contexts != null && contexts.Count > 0)
             {
                 int contextIndex = 1;
@@ -1616,6 +2861,7 @@ namespace WordCopilotChat
                             if (mermaidContent != null)
                             {
                                 string imageData = mermaidContent["imageData"]?.ToString();
+                                string svgData = mermaidContent["svgData"]?.ToString();
                                 string mermaidCode = mermaidContent["mermaidCode"]?.ToString();
                                 int width = mermaidContent["width"]?.ToObject<int>() ?? 400;
                                 int height = mermaidContent["height"]?.ToObject<int>() ?? 300;
@@ -1623,10 +2869,18 @@ namespace WordCopilotChat
                                 Debug.WriteLine($"Mermaid图片数据长度: {imageData?.Length ?? 0}");
                                 Debug.WriteLine($"Mermaid图片尺寸: {width}x{height}");
 
-                                if (!string.IsNullOrEmpty(imageData))
+                                if (!string.IsNullOrEmpty(imageData) || !string.IsNullOrEmpty(svgData))
                                 {
-                                    // 使用InsertMermaidImage方法插入PNG图片
-                                    bool success = _markdownToWord.InsertMermaidImage(imageData, mermaidCode, width, height);
+                                    // 优先插入 SVG（矢量，缩放清晰）；失败再回退 PNG
+                                    bool success = false;
+                                    if (!string.IsNullOrEmpty(svgData))
+                                    {
+                                        success = _markdownToWord.InsertMermaidImageFromSvg(svgData, mermaidCode, width, height);
+                                    }
+                                    if (!success && !string.IsNullOrEmpty(imageData))
+                                    {
+                                        success = _markdownToWord.InsertMermaidImage(imageData, mermaidCode, width, height);
+                                    }
                                     if (success)
                                     {
                                         Debug.WriteLine("Mermaid PNG图片插入成功");
@@ -1644,7 +2898,7 @@ namespace WordCopilotChat
                                     }
                                     else
                                     {
-                                        Debug.WriteLine("Mermaid PNG图片插入失败，回退到代码块");
+                                        Debug.WriteLine("Mermaid图片插入失败（SVG/PNG都失败），回退到代码块");
                                         // 回退到代码块
                                         if (!string.IsNullOrEmpty(mermaidCode))
                                         {
@@ -1666,7 +2920,7 @@ namespace WordCopilotChat
                                 }
                                 else
                                 {
-                                    Debug.WriteLine("Mermaid图片数据为空，回退到代码块");
+                                    Debug.WriteLine("Mermaid图片数据为空（PNG与SVG都为空），回退到代码块");
                                     // 回退到代码块
                                     if (!string.IsNullOrEmpty(mermaidCode))
                                     {
@@ -2233,7 +3487,8 @@ namespace WordCopilotChat
                     template = model.Template?.TemplateName ?? "未知",
                     baseUrl = model.BaseUrl,
                     modelName = ExtractModelNameFromParameters(model.Parameters),
-                    enableTools = model.EnableTools // 包含工具调用启用状态
+                    enableTools = model.EnableTools, // 包含工具调用启用状态
+                    enableMulti = model.EnableMulti  // 0:禁用,1:多模态启用
                 }).ToList();
 
                 // 构建消息对象
@@ -2516,6 +3771,76 @@ namespace WordCopilotChat
             catch (Exception ex)
             {
                 Debug.WriteLine($"处理工具进度事件时出错: {ex.Message}");
+            }
+        }
+
+        // 处理来自 OpenAI 的 usage 事件（token 用量）
+        private void HandleUsageFromOpenAI(JObject usageData)
+        {
+            try
+            {
+                // 确保在UI线程执行
+                if (InvokeRequired)
+                {
+                    Invoke(new Action(() => HandleUsageFromOpenAI(usageData)));
+                    return;
+                }
+
+                // 记录到 VS 输出，便于观察每次生成结束的 usage 字段
+                try
+                {
+                    int? promptTokens = usageData["prompt_tokens"]?.ToObject<int?>();
+                    int? completionTokens = usageData["completion_tokens"]?.ToObject<int?>();
+                    int? totalTokens = usageData["total_tokens"]?.ToObject<int?>();
+                    int? maxTokens = usageData["max_tokens"]?.ToObject<int?>();
+                    int? usedForMax = usageData["used_for_max_tokens"]?.ToObject<int?>();
+                    int? remaining = usageData["remaining_tokens"]?.ToObject<int?>();
+                    bool estimated = usageData["estimated"]?.ToObject<bool?>() ?? false;
+                    bool suppressed = System.Threading.Volatile.Read(ref _suppressUsageToFrontendCount) > 0;
+
+                    Debug.WriteLine($"[usage] prompt={promptTokens?.ToString() ?? "null"}, completion={completionTokens?.ToString() ?? "null"}, total={totalTokens?.ToString() ?? "null"}, max={maxTokens?.ToString() ?? "null"}, used_for_max={usedForMax?.ToString() ?? "null"}, remaining={remaining?.ToString() ?? "null"}, estimated={estimated}, suppressed_to_ui={suppressed}");
+                }
+                catch { }
+
+                // 保存最近一次 usage
+                _lastUsagePayload = usageData;
+
+                // 压缩等内部请求期间不更新前端 token 组件，避免百分比跳变
+                if (System.Threading.Volatile.Read(ref _suppressUsageToFrontendCount) > 0)
+                {
+                    return;
+                }
+
+                if (_webViewInitialized && webView21?.CoreWebView2 != null)
+                {
+                    // 计算上下文长度（tokens）
+                    int? contextLengthTokens = null;
+                    if (_currentModelConfig?.ContextLength.HasValue == true && _currentModelConfig.ContextLength.Value > 0)
+                    {
+                        contextLengthTokens = _currentModelConfig.ContextLength.Value * 1024;
+                    }
+
+                    var messageData = new
+                    {
+                        type = "usage",
+                        prompt_tokens = usageData["prompt_tokens"]?.ToObject<int?>(),
+                        completion_tokens = usageData["completion_tokens"]?.ToObject<int?>(),
+                        total_tokens = usageData["total_tokens"]?.ToObject<int?>(),
+                        max_tokens = usageData["max_tokens"]?.ToObject<int?>(),
+                        context_length = contextLengthTokens,
+                        used_for_max_tokens = usageData["used_for_max_tokens"]?.ToObject<int?>(),
+                        remaining_tokens = usageData["remaining_tokens"]?.ToObject<int?>(),
+                        estimated = usageData["estimated"]?.ToObject<bool?>() ?? false,
+                        timestamp = DateTime.Now.ToString("HH:mm:ss.fff")
+                    };
+
+                    string json = JsonConvert.SerializeObject(messageData);
+                    webView21.CoreWebView2.PostWebMessageAsJson(json);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"处理usage事件时出错: {ex.Message}");
             }
         }
 
@@ -3167,13 +4492,4 @@ namespace WordCopilotChat
             }
         }
     }
-
-    // 用于解析WebMessage的数据结构（如果使用JObject，则可以不需要此类）
-    /*
-    public class WebMessageData
-    {
-        public string Type { get; set; }
-        public string Message { get; set; }
-    }
-    */
 }

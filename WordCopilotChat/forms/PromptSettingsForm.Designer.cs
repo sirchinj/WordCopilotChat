@@ -10,12 +10,15 @@ namespace WordCopilotChat
         private System.Windows.Forms.TabPage tabPageChat;
         private System.Windows.Forms.TabPage tabPageAgent;
         private System.Windows.Forms.TabPage tabPageWelcome;
+        private System.Windows.Forms.TabPage tabPageCompress;
         private System.Windows.Forms.TextBox txtChatPrompt;
         private System.Windows.Forms.TextBox txtAgentPrompt;
         private System.Windows.Forms.TextBox txtWelcomePrompt;
+        private System.Windows.Forms.TextBox txtCompressPrompt;
         private System.Windows.Forms.Label lblChatPrompt;
         private System.Windows.Forms.Label lblAgentPrompt;
         private System.Windows.Forms.Label lblWelcomePrompt;
+        private System.Windows.Forms.Label lblCompressPrompt;
         private System.Windows.Forms.Button btnSave;
         private System.Windows.Forms.Button btnReset;
         private System.Windows.Forms.Button btnCancel;
@@ -23,9 +26,11 @@ namespace WordCopilotChat
         private System.Windows.Forms.Button btnPreviewChat;
         private System.Windows.Forms.Button btnPreviewAgent;
         private System.Windows.Forms.Button btnPreviewWelcome;
+        private System.Windows.Forms.Button btnPreviewCompress;
         private System.Windows.Forms.Label lblChatDesc;
         private System.Windows.Forms.Label lblAgentDesc;
         private System.Windows.Forms.Label lblWelcomeDesc;
+        private System.Windows.Forms.Label lblCompressDesc;
         private System.Windows.Forms.Button btnExport;
         private System.Windows.Forms.Button btnImport;
 
@@ -66,6 +71,11 @@ namespace WordCopilotChat
             this.txtWelcomePrompt = new System.Windows.Forms.TextBox();
             this.lblWelcomeDesc = new System.Windows.Forms.Label();
             this.lblWelcomePrompt = new System.Windows.Forms.Label();
+            this.tabPageCompress = new System.Windows.Forms.TabPage();
+            this.btnPreviewCompress = new System.Windows.Forms.Button();
+            this.txtCompressPrompt = new System.Windows.Forms.TextBox();
+            this.lblCompressDesc = new System.Windows.Forms.Label();
+            this.lblCompressPrompt = new System.Windows.Forms.Label();
             this.btnSave = new System.Windows.Forms.Button();
             this.btnReset = new System.Windows.Forms.Button();
             this.btnCancel = new System.Windows.Forms.Button();
@@ -76,6 +86,7 @@ namespace WordCopilotChat
             this.tabPageChat.SuspendLayout();
             this.tabPageAgent.SuspendLayout();
             this.tabPageWelcome.SuspendLayout();
+            this.tabPageCompress.SuspendLayout();
             this.SuspendLayout();
             // 
             // tabControl1
@@ -86,6 +97,7 @@ namespace WordCopilotChat
             this.tabControl1.Controls.Add(this.tabPageChat);
             this.tabControl1.Controls.Add(this.tabPageAgent);
             this.tabControl1.Controls.Add(this.tabPageWelcome);
+            this.tabControl1.Controls.Add(this.tabPageCompress);
             this.tabControl1.Location = new System.Drawing.Point(12, 12);
             this.tabControl1.Name = "tabControl1";
             this.tabControl1.SelectedIndex = 0;
@@ -281,6 +293,69 @@ namespace WordCopilotChat
             this.lblWelcomePrompt.TabIndex = 0;
             this.lblWelcomePrompt.Text = "欢迎页内容";
             // 
+            // tabPageCompress
+            // 
+            this.tabPageCompress.Controls.Add(this.btnPreviewCompress);
+            this.tabPageCompress.Controls.Add(this.txtCompressPrompt);
+            this.tabPageCompress.Controls.Add(this.lblCompressDesc);
+            this.tabPageCompress.Controls.Add(this.lblCompressPrompt);
+            this.tabPageCompress.Location = new System.Drawing.Point(4, 22);
+            this.tabPageCompress.Name = "tabPageCompress";
+            this.tabPageCompress.Padding = new System.Windows.Forms.Padding(3);
+            this.tabPageCompress.Size = new System.Drawing.Size(752, 474);
+            this.tabPageCompress.TabIndex = 3;
+            this.tabPageCompress.Text = "上下文压缩";
+            this.tabPageCompress.UseVisualStyleBackColor = true;
+            // 
+            // btnPreviewCompress
+            // 
+            this.btnPreviewCompress.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
+            this.btnPreviewCompress.Location = new System.Drawing.Point(671, 445);
+            this.btnPreviewCompress.Name = "btnPreviewCompress";
+            this.btnPreviewCompress.Size = new System.Drawing.Size(75, 23);
+            this.btnPreviewCompress.TabIndex = 3;
+            this.btnPreviewCompress.Text = "预览";
+            this.btnPreviewCompress.UseVisualStyleBackColor = true;
+            this.btnPreviewCompress.Click += new System.EventHandler(this.BtnPreviewCompress_Click);
+            // 
+            // txtCompressPrompt
+            // 
+            this.txtCompressPrompt.AcceptsReturn = true;
+            this.txtCompressPrompt.AcceptsTab = true;
+            this.txtCompressPrompt.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
+            | System.Windows.Forms.AnchorStyles.Left) 
+            | System.Windows.Forms.AnchorStyles.Right)));
+            this.txtCompressPrompt.Font = new System.Drawing.Font("Microsoft YaHei", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.txtCompressPrompt.Location = new System.Drawing.Point(6, 60);
+            this.txtCompressPrompt.Multiline = true;
+            this.txtCompressPrompt.Name = "txtCompressPrompt";
+            this.txtCompressPrompt.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
+            this.txtCompressPrompt.Size = new System.Drawing.Size(740, 379);
+            this.txtCompressPrompt.TabIndex = 2;
+            this.txtCompressPrompt.WordWrap = true;
+            this.txtCompressPrompt.TextChanged += new System.EventHandler(this.OnTextChanged);
+            // 
+            // lblCompressDesc
+            // 
+            this.lblCompressDesc.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left) 
+            | System.Windows.Forms.AnchorStyles.Right)));
+            this.lblCompressDesc.ForeColor = System.Drawing.Color.Gray;
+            this.lblCompressDesc.Location = new System.Drawing.Point(6, 25);
+            this.lblCompressDesc.Name = "lblCompressDesc";
+            this.lblCompressDesc.Size = new System.Drawing.Size(740, 32);
+            this.lblCompressDesc.TabIndex = 1;
+            this.lblCompressDesc.Text = "当对话历史Token占用过高时，系统会自动调用此提示词对历史对话进行压缩总结，以节省Token并保持上下文连贯性。";
+            // 
+            // lblCompressPrompt
+            // 
+            this.lblCompressPrompt.AutoSize = true;
+            this.lblCompressPrompt.Font = new System.Drawing.Font("Microsoft YaHei", 9F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.lblCompressPrompt.Location = new System.Drawing.Point(6, 6);
+            this.lblCompressPrompt.Name = "lblCompressPrompt";
+            this.lblCompressPrompt.Size = new System.Drawing.Size(116, 17);
+            this.lblCompressPrompt.TabIndex = 0;
+            this.lblCompressPrompt.Text = "上下文压缩提示词";
+            // 
             // btnSave
             // 
             this.btnSave.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
@@ -378,6 +453,8 @@ namespace WordCopilotChat
             this.tabPageAgent.PerformLayout();
             this.tabPageWelcome.ResumeLayout(false);
             this.tabPageWelcome.PerformLayout();
+            this.tabPageCompress.ResumeLayout(false);
+            this.tabPageCompress.PerformLayout();
             this.ResumeLayout(false);
 
         }

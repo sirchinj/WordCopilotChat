@@ -8,8 +8,6 @@ using System.Threading.Tasks;
 using Microsoft.Office.Interop.Word;
 using Newtonsoft.Json;
 using WordCopilotChat.utils;
-
-
 // 使用别名解决命名冲突
 using TaskAsync = System.Threading.Tasks.Task;
 
@@ -40,6 +38,61 @@ namespace WordCopilot.utils
 
         // 是否显示调试详细信息
         private static bool _showDebugInfo = false;
+
+        /// <summary>
+        /// 获取当前Word文档的完整文本内容
+        /// </summary>
+        /// <param name="maxLength">最大字符数限制（0表示无限制），默认50000字符</param>
+        /// <returns>文档完整文本内容</returns>
+        public static string GetFullDocumentContent(int maxLength = 50000)
+        {
+            try
+            {
+                var app = _markdownToWord.GetWordApplication();
+                if (app == null)
+                {
+                    return "错误：无法连接到Word应用程序";
+                }
+
+                var doc = _markdownToWord.GetActiveDocument(app);
+                if (doc == null)
+                {
+                    return "错误：无法获取当前Word文档";
+                }
+
+                Debug.WriteLine("开始读取文档完整内容...");
+
+                // 使用Range获取文档全文
+                var content = doc.Content.Text as string;
+
+                if (string.IsNullOrEmpty(content))
+                {
+                    return "当前文档为空";
+                }
+
+                // 清理文本（移除多余的控制字符）
+                content = content.Replace("\r", "\n").Replace("\a", "").Trim();
+
+                // 统计信息
+                int totalChars = content.Length;
+                Debug.WriteLine($"文档完整内容长度: {totalChars} 字符");
+
+                // 如果超过最大长度，进行截断
+                if (maxLength > 0 && content.Length > maxLength)
+                {
+                    content = content.Substring(0, maxLength);
+                    content += $"\n\n[注意：文档内容过长，已截取前 {maxLength} 字符]";
+                    Debug.WriteLine($"文档内容已截断到 {maxLength} 字符");
+                }
+
+                return content;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"读取文档内容失败: {ex.Message}");
+                return $"错误：读取文档内容失败 - {ex.Message}";
+            }
+        }
 
         // 工具进度通知辅助方法
         private static void NotifyProgress(string message)
@@ -294,6 +347,31 @@ namespace WordCopilot.utils
                 List<object> pagedHeadings = pagedResult.Item1;
                 int totalCount = pagedResult.Item2;
                 bool hasMore = pagedResult.Item3;
+
+                // 如果分页方法没有找到标题（第一页且总数为0），尝试使用字体大小识别
+                if (page == 0 && totalCount == 0)
+                {
+                    Debug.WriteLine("分页未找到标题，尝试使用字体大小识别...");
+                    var fontSizeHeadings = TryGetHeadingsByFontSizeForSelector(doc, cancellationToken);
+
+                    if (fontSizeHeadings.Count > 0)
+                    {
+                        Debug.WriteLine($"字体大小识别找到 {fontSizeHeadings.Count} 个标题");
+
+                        // 字体大小识别不支持真正的分页，一次性返回所有结果
+                        var fontSizeResult = new
+                        {
+                            headings = fontSizeHeadings,
+                            hasMore = false,
+                            total = fontSizeHeadings.Count,
+                            page = 0,
+                            pageSize = fontSizeHeadings.Count,
+                            recognitionMode = "font_size"
+                        };
+
+                        return JsonConvert.SerializeObject(fontSizeResult, Formatting.None);
+                    }
+                }
 
                 Debug.WriteLine($"分页结果 - 总数: {totalCount}, 当前页: {pagedHeadings.Count}, 还有更多: {hasMore}");
 
@@ -680,6 +758,7 @@ namespace WordCopilot.utils
 
         /// <summary>
         /// 使用OutlineLevel属性获取标题（高效且准确，支持取消）
+        /// 如果没有找到标题样式，会自动尝试通过字体大小识别标题
         /// </summary>
         private static List<object> GetHeadingsUsingOutlineLevel(dynamic doc, CancellationToken cancellationToken = default)
         {
@@ -737,6 +816,20 @@ namespace WordCopilot.utils
                         continue;
                     }
                 }
+
+                // 如果没有找到标题样式，尝试通过字体大小识别标题
+                if (headings.Count == 0)
+                {
+                    Debug.WriteLine("OutlineLevel未找到标题，尝试通过字体大小识别...");
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    headings = TryGetHeadingsByFontSizeForSelector(doc, cancellationToken);
+
+                    if (headings.Count > 0)
+                    {
+                        Debug.WriteLine($"通过字体大小识别到 {headings.Count} 个标题");
+                    }
+                }
             }
             catch (OperationCanceledException)
             {
@@ -749,6 +842,123 @@ namespace WordCopilot.utils
             }
 
             Debug.WriteLine($"OutlineLevel方法找到 {headings.Count} 个标题");
+            return headings;
+        }
+
+        /// <summary>
+        /// 尝试通过字体大小识别标题（用于快捷选择器，返回简化格式）
+        /// </summary>
+        private static List<object> TryGetHeadingsByFontSizeForSelector(dynamic doc, CancellationToken cancellationToken = default)
+        {
+            var headings = new List<object>();
+
+            try
+            {
+                // 第一遍扫描：收集字体大小统计信息
+                var fontSizeStats = new Dictionary<float, int>();
+                var paragraphInfos = new List<(string Text, float FontSize, dynamic Range)>();
+
+                int paraIndex = 0;
+                foreach (dynamic para in doc.Paragraphs)
+                {
+                    paraIndex++;
+                    if (paraIndex % 50 == 0)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
+
+                    try
+                    {
+                        string text = para.Range.Text?.Trim() ?? "";
+                        text = text.Replace("\r", "").Replace("\n", "").Replace("\x07", "").Trim();
+
+                        if (string.IsNullOrWhiteSpace(text)) continue;
+
+                        float fontSize = 0;
+                        try
+                        {
+                            var font = para.Range.Font;
+                            if (font.Size > 0 && font.Size < 1000)
+                            {
+                                fontSize = font.Size;
+                            }
+                            else if (para.Range.Characters.Count > 0)
+                            {
+                                var firstCharFont = para.Range.Characters[1].Font;
+                                if (firstCharFont.Size > 0 && firstCharFont.Size < 1000)
+                                {
+                                    fontSize = firstCharFont.Size;
+                                }
+                            }
+                        }
+                        catch { fontSize = 0; }
+
+                        if (fontSize > 0)
+                        {
+                            fontSize = (float)Math.Round(fontSize * 2) / 2;
+                            int weight = Math.Min(text.Length, 100);
+
+                            if (fontSizeStats.ContainsKey(fontSize))
+                                fontSizeStats[fontSize] += weight;
+                            else
+                                fontSizeStats[fontSize] = weight;
+
+                            paragraphInfos.Add((text, fontSize, para.Range));
+                        }
+                    }
+                    catch { }
+                }
+
+                if (paragraphInfos.Count == 0 || fontSizeStats.Count == 0)
+                    return headings;
+
+                float bodyFontSize = fontSizeStats.OrderByDescending(x => x.Value).First().Key;
+
+                var largerFontSizes = fontSizeStats.Keys
+                    .Where(s => s > bodyFontSize + 1.5f)
+                    .OrderByDescending(s => s)
+                    .Take(6)
+                    .ToList();
+
+                if (largerFontSizes.Count == 0)
+                    return headings;
+
+                var fontSizeToLevel = new Dictionary<float, int>();
+                for (int i = 0; i < largerFontSizes.Count; i++)
+                {
+                    fontSizeToLevel[largerFontSizes[i]] = i + 1;
+                }
+
+                foreach (var (text, fontSize, range) in paragraphInfos)
+                {
+                    if (fontSizeToLevel.ContainsKey(fontSize))
+                    {
+                        if (text.Length > 100) continue;
+                        if (string.IsNullOrWhiteSpace(text.Trim('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '、', ' ')))
+                            continue;
+
+                        int level = fontSizeToLevel[fontSize];
+                        int pageNum = 0;
+                        try { pageNum = GetPageNumber(range); } catch { }
+
+                        headings.Add(new
+                        {
+                            text = text,
+                            level = level,
+                            page = pageNum
+                        });
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"字体大小识别标题出错: {ex.Message}");
+            }
+
             return headings;
         }
 
@@ -3521,11 +3731,41 @@ namespace WordCopilot.utils
 
                 Debug.WriteLine($"标题扫描完成，共找到 {headings.Count} 个标题");
 
+                // 如果没有找到标题样式，尝试通过字体大小识别标题
+                bool usedFontSizeRecognition = false;
+                if (headings.Count == 0 && !targetLevel.HasValue)
+                {
+                    Debug.WriteLine("未找到标题样式，尝试通过字体大小识别标题...");
+                    headings = TryGetHeadingsByFontSize(doc);
+                    usedFontSizeRecognition = headings.Count > 0;
+
+                    if (usedFontSizeRecognition)
+                    {
+                        Debug.WriteLine($"通过字体大小识别到 {headings.Count} 个标题");
+                    }
+                }
+
                 if (headings.Count == 0)
                 {
                     string levelInfo = targetLevel.HasValue ? $"级别 {targetLevel} 的" : "";
-                    return $"未找到{levelInfo}标题。文档可能没有使用标题样式，或者没有{levelInfo}标题。";
+
+                    // 返回特殊格式的JSON，明确告知AI无标题并停止重复调用
+                    var noHeadingsResult = new
+                    {
+                        total_headings = 0,
+                        has_headings = false,
+                        message = $"未找到{levelInfo}标题。此文档没有使用Word标题样式（Heading 1-9），也没有检测到明显的大字体标题文本。",
+                        suggestion = "建议使用 get_selected_text 工具获取选中的文本内容，或使用 get_document_statistics 查看文档概况。请勿再次调用 get_document_headings。",
+                        headings = new object[0]
+                    };
+
+                    return JsonConvert.SerializeObject(noHeadingsResult, Formatting.Indented);
                 }
+
+                // 识别方式说明
+                string recognitionNote = usedFontSizeRecognition
+                    ? "（通过字体大小识别，文档未使用标准标题样式）"
+                    : "";
 
                 // 实现分页逻辑
                 object result;
@@ -3547,8 +3787,9 @@ namespace WordCopilot.utils
                             page_size = pageSize,
                             total_pages = totalPages,
                             has_more = false,
+                            recognition_mode = usedFontSizeRecognition ? "font_size" : "outline_level",
                             headings = new List<object>(),
-                            message = $"页码超出范围。总共有 {totalPages} 页（从第0页开始）"
+                            message = $"页码超出范围。总共有 {totalPages} 页（从第0页开始）{recognitionNote}"
                         };
                     }
                     else
@@ -3565,8 +3806,9 @@ namespace WordCopilot.utils
                             page_size = pageSize,
                             total_pages = totalPages,
                             has_more = hasMore,
+                            recognition_mode = usedFontSizeRecognition ? "font_size" : "outline_level",
                             headings = pagedHeadings,
-                            message = $"已返回第 {page + 1}/{totalPages} 页（共 {totalHeadings} 个标题）"
+                            message = $"已返回第 {page + 1}/{totalPages} 页（共 {totalHeadings} 个标题）{recognitionNote}"
                         };
 
                         Debug.WriteLine($"分页返回: 页{page}, 每页{pageSize}, 返回{pagedHeadings.Count}个标题");
@@ -3579,10 +3821,12 @@ namespace WordCopilot.utils
                     {
                         total_headings = headings.Count,
                         target_level = targetLevel,
-                        headings = headings
+                        recognition_mode = usedFontSizeRecognition ? "font_size" : "outline_level",
+                        headings = headings,
+                        message = usedFontSizeRecognition ? "标题通过字体大小识别（文档未使用标准标题样式）" : null
                     };
 
-                    Debug.WriteLine($"全量返回: {headings.Count}个标题");
+                    Debug.WriteLine($"全量返回: {headings.Count}个标题" + (usedFontSizeRecognition ? "（字体大小识别）" : ""));
                 }
 
                 return JsonConvert.SerializeObject(result, Formatting.Indented);
@@ -3594,10 +3838,173 @@ namespace WordCopilot.utils
             }
         }
 
+        /// <summary>
+        /// 尝试通过字体大小识别标题（当文档没有使用标题样式时的备选方案）
+        /// </summary>
+        private static List<object> TryGetHeadingsByFontSize(dynamic doc)
+        {
+            var headings = new List<object>();
 
+            try
+            {
+                Debug.WriteLine("开始通过字体大小识别标题...");
+
+                // 第一遍扫描：收集字体大小统计信息
+                var fontSizeStats = new Dictionary<float, int>(); // 字体大小 -> 加权出现次数
+                var paragraphInfos = new List<dynamic>();
+
+                int paraIndex = 0;
+                foreach (dynamic para in doc.Paragraphs)
+                {
+                    paraIndex++;
+                    try
+                    {
+                        string text = para.Range.Text?.Trim() ?? "";
+                        text = text.Replace("\r", "").Replace("\n", "").Replace("\x07", "").Trim();
+
+                        if (string.IsNullOrWhiteSpace(text)) continue;
+
+                        // 获取段落的字体大小
+                        float fontSize = 0;
+                        try
+                        {
+                            var font = para.Range.Font;
+                            if (font.Size > 0 && font.Size < 1000)
+                            {
+                                fontSize = font.Size;
+                            }
+                            else
+                            {
+                                // 混合字体大小时，取第一个字符的大小
+                                if (para.Range.Characters.Count > 0)
+                                {
+                                    var firstCharFont = para.Range.Characters[1].Font;
+                                    if (firstCharFont.Size > 0 && firstCharFont.Size < 1000)
+                                    {
+                                        fontSize = firstCharFont.Size;
+                                    }
+                                }
+                            }
+                        }
+                        catch
+                        {
+                            fontSize = 0;
+                        }
+
+                        if (fontSize > 0)
+                        {
+                            // 四舍五入到0.5磅
+                            fontSize = (float)Math.Round(fontSize * 2) / 2;
+
+                            // 统计字体大小出现次数（按文本长度加权，但限制最大权重）
+                            int weight = Math.Min(text.Length, 100);
+                            if (fontSizeStats.ContainsKey(fontSize))
+                            {
+                                fontSizeStats[fontSize] += weight;
+                            }
+                            else
+                            {
+                                fontSizeStats[fontSize] = weight;
+                            }
+
+                            // 存储段落信息
+                            paragraphInfos.Add(new
+                            {
+                                Index = paraIndex,
+                                Text = text,
+                                FontSize = fontSize,
+                                Range = para.Range
+                            });
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"分析段落 {paraIndex} 字体时出错: {ex.Message}");
+                    }
+                }
+
+                if (paragraphInfos.Count == 0 || fontSizeStats.Count == 0)
+                {
+                    Debug.WriteLine("未能获取有效的字体信息");
+                    return headings;
+                }
+
+                // 确定正文字体大小（出现频率最高的）
+                float bodyFontSize = fontSizeStats.OrderByDescending(x => x.Value).First().Key;
+                Debug.WriteLine($"检测到正文字体大小: {bodyFontSize}磅");
+
+                // 找出所有比正文大的字体大小，按大小降序排列
+                var largerFontSizes = fontSizeStats.Keys
+                    .Where(s => s > bodyFontSize + 1.5f) // 至少比正文大1.5磅
+                    .OrderByDescending(s => s)
+                    .Take(6) // 最多支持6级
+                    .ToList();
+
+                if (largerFontSizes.Count == 0)
+                {
+                    Debug.WriteLine("未找到比正文更大的字体");
+                    return headings;
+                }
+
+                Debug.WriteLine($"找到 {largerFontSizes.Count} 种较大字体: {string.Join(", ", largerFontSizes.Select(s => s + "磅"))}");
+
+                // 建立字体大小到标题级别的映射
+                var fontSizeToLevel = new Dictionary<float, int>();
+                for (int i = 0; i < largerFontSizes.Count; i++)
+                {
+                    fontSizeToLevel[largerFontSizes[i]] = i + 1;
+                }
+
+                // 第二遍扫描：识别标题
+                foreach (var paraInfo in paragraphInfos)
+                {
+                    float fontSize = paraInfo.FontSize;
+                    string text = paraInfo.Text;
+
+                    if (fontSizeToLevel.ContainsKey(fontSize))
+                    {
+                        int level = fontSizeToLevel[fontSize];
+
+                        // 标题文本过滤
+                        if (text.Length > 100) continue; // 太长不是标题
+                        if (string.IsNullOrWhiteSpace(text.Trim('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '、', ' ')))
+                            continue; // 纯数字不是标题
+
+                        // 获取页码
+                        int pageNum = 0;
+                        try
+                        {
+                            pageNum = GetPageNumber(paraInfo.Range);
+                        }
+                        catch { }
+
+                        headings.Add(new
+                        {
+                            text = text,
+                            level = level,
+                            position = (int)paraInfo.Range.Start,
+                            pageNumber = pageNum,
+                            styleName = $"(字体{fontSize}磅)",
+                            outlineLevel = level,
+                            fontSizeRecognized = true
+                        });
+
+                        Debug.WriteLine($"字体识别标题: {text} (H{level}, {fontSize}磅, 页码{pageNum})");
+                    }
+                }
+
+                Debug.WriteLine($"字体大小识别完成，共找到 {headings.Count} 个标题");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"通过字体大小识别标题时出错: {ex.Message}");
+            }
+
+            return headings;
+        }
 
         // 实现获取文档统计的功能
-        private static string GetDocumentStatistics()
+        public static string GetDocumentStatistics()
         {
             try
             {
@@ -3616,6 +4023,43 @@ namespace WordCopilot.utils
                 // 更新统计信息
                 doc.Range().ComputeStatistics(WdStatistic.wdStatisticWords);
 
+                // 统计标题数量（先尝试 OutlineLevel，再尝试字体大小识别）
+                int headingCount = 0;
+                string headingRecognitionMode = "none";
+
+                // 先用 OutlineLevel 统计
+                foreach (dynamic para in doc.Paragraphs)
+                {
+                    try
+                    {
+                        var outlineLevel = para.OutlineLevel;
+                        if (outlineLevel != null && outlineLevel >= 1 && outlineLevel <= 9)
+                        {
+                            string text = para.Range.Text?.Trim() ?? "";
+                            if (!string.IsNullOrWhiteSpace(text))
+                            {
+                                headingCount++;
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                if (headingCount > 0)
+                {
+                    headingRecognitionMode = "outline_level";
+                }
+                else
+                {
+                    // 尝试使用字体大小识别
+                    var fontSizeHeadings = TryGetHeadingsByFontSizeForSelector(doc);
+                    headingCount = fontSizeHeadings.Count;
+                    if (headingCount > 0)
+                    {
+                        headingRecognitionMode = "font_size";
+                    }
+                }
+
                 var stats = new
                 {
                     document_name = doc.Name,
@@ -3625,6 +4069,8 @@ namespace WordCopilot.utils
                     paragraph_count = doc.Range().ComputeStatistics(WdStatistic.wdStatisticParagraphs),
                     line_count = doc.Range().ComputeStatistics(WdStatistic.wdStatisticLines),
                     page_count = doc.Range().ComputeStatistics(WdStatistic.wdStatisticPages),
+                    heading_count = headingCount,
+                    heading_recognition_mode = headingRecognitionMode,
                     comment_count = doc.Comments.Count,
                     table_count = doc.Tables.Count,
                     section_count = doc.Sections.Count
@@ -4558,7 +5004,25 @@ namespace WordCopilot.utils
                 }
                 else
                 {
-                    // 生成建议
+                    // 没有找到 OutlineLevel 标题，尝试使用字体大小识别
+                    Debug.WriteLine("OutlineLevel未找到标题，尝试通过字体大小查找...");
+                    NotifyProgress("尝试通过字体大小查找标题...");
+
+                    var fontSizeResult = FindHeadingByFontSize(doc, targetHeading, matchLevel, keywords);
+                    if (fontSizeResult.found)
+                    {
+                        result.found = true;
+                        result.headingInfo = fontSizeResult.headingInfo;
+                        Debug.WriteLine($"通过字体大小找到标题: {fontSizeResult.headingInfo.text}");
+                        NotifyProgress($"通过字体大小找到标题: {fontSizeResult.headingInfo.text}");
+                        return result;
+                    }
+
+                    // 生成建议（包括字体大小识别的标题）
+                    if (fontSizeResult.allHeadings != null && fontSizeResult.allHeadings.Count > 0)
+                    {
+                        allHeadings.AddRange(fontSizeResult.allHeadings);
+                    }
                     result.suggestions = GenerateHeadingSuggestions(allHeadings, targetHeading, 5);
                     Debug.WriteLine($"未找到匹配标题，生成了 {result.suggestions.Length} 个建议");
                 }
@@ -4571,6 +5035,160 @@ namespace WordCopilot.utils
                 result.suggestions = new string[] { "搜索过程中发生错误，请检查标题文本或尝试其他关键词" };
                 return result;
             }
+        }
+
+        // 字体大小查找结果结构
+        private class FontSizeFindResult
+        {
+            public bool found;
+            public dynamic headingInfo;
+            public List<string> allHeadings;
+        }
+
+        // 通过字体大小查找标题
+        private static FontSizeFindResult FindHeadingByFontSize(dynamic doc, string targetHeading, string matchLevel, string[] keywords)
+        {
+            var result = new FontSizeFindResult { found = false, headingInfo = null, allHeadings = new List<string>() };
+
+            try
+            {
+                Debug.WriteLine("开始通过字体大小查找标题...");
+
+                // 收集字体信息
+                var fontSizeStats = new Dictionary<float, int>();
+                var paragraphInfos = new List<(string Text, float FontSize, dynamic Range, int Position)>();
+
+                int paraIndex = 0;
+                foreach (dynamic para in doc.Paragraphs)
+                {
+                    paraIndex++;
+                    try
+                    {
+                        string text = para.Range.Text?.Trim() ?? "";
+                        text = text.Replace("\r", "").Replace("\n", "").Replace("\x07", "").Trim();
+                        if (string.IsNullOrWhiteSpace(text)) continue;
+
+                        float fontSize = 0;
+                        try
+                        {
+                            var font = para.Range.Font;
+                            if (font.Size > 0 && font.Size < 1000)
+                                fontSize = font.Size;
+                            else if (para.Range.Characters.Count > 0)
+                            {
+                                var firstCharFont = para.Range.Characters[1].Font;
+                                if (firstCharFont.Size > 0 && firstCharFont.Size < 1000)
+                                    fontSize = firstCharFont.Size;
+                            }
+                        }
+                        catch { fontSize = 0; }
+
+                        if (fontSize > 0)
+                        {
+                            fontSize = (float)Math.Round(fontSize * 2) / 2;
+                            int weight = Math.Min(text.Length, 100);
+
+                            if (fontSizeStats.ContainsKey(fontSize))
+                                fontSizeStats[fontSize] += weight;
+                            else
+                                fontSizeStats[fontSize] = weight;
+
+                            paragraphInfos.Add((text, fontSize, para.Range, para.Range.Start));
+                        }
+                    }
+                    catch { }
+                }
+
+                if (paragraphInfos.Count == 0 || fontSizeStats.Count == 0)
+                    return result;
+
+                float bodyFontSize = fontSizeStats.OrderByDescending(x => x.Value).First().Key;
+                var largerFontSizes = fontSizeStats.Keys
+                    .Where(s => s > bodyFontSize + 1.5f)
+                    .OrderByDescending(s => s)
+                    .Take(6)
+                    .ToList();
+
+                if (largerFontSizes.Count == 0)
+                    return result;
+
+                var fontSizeToLevel = new Dictionary<float, int>();
+                for (int i = 0; i < largerFontSizes.Count; i++)
+                    fontSizeToLevel[largerFontSizes[i]] = i + 1;
+
+                // 查找匹配的标题
+                var candidateHeadings = new List<dynamic>();
+                string normalizedTarget = NormalizeText(targetHeading);
+
+                foreach (var (text, fontSize, range, position) in paragraphInfos)
+                {
+                    if (!fontSizeToLevel.ContainsKey(fontSize)) continue;
+                    if (text.Length > 100) continue;
+                    if (string.IsNullOrWhiteSpace(text.Trim('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '、', ' ')))
+                        continue;
+
+                    result.allHeadings.Add(text);
+                    int level = fontSizeToLevel[fontSize];
+
+                    // 匹配检查
+                    string normalizedPara = NormalizeText(text);
+                    bool isMatch = false;
+                    double matchScore = 0.0;
+
+                    switch (matchLevel.ToLower())
+                    {
+                        case "exact":
+                            isMatch = normalizedPara == normalizedTarget ||
+                                     text.Equals(targetHeading, StringComparison.OrdinalIgnoreCase);
+                            matchScore = isMatch ? 1.0 : 0.0;
+                            break;
+                        case "keywords":
+                            matchScore = CalculateKeywordMatchScore(text, keywords);
+                            isMatch = matchScore >= 0.6;
+                            break;
+                        case "fuzzy":
+                            matchScore = CalculateFuzzyMatchScore(normalizedPara, normalizedTarget);
+                            isMatch = matchScore >= 0.4;
+                            break;
+                        default:
+                            matchScore = CalculateKeywordMatchScore(text, keywords);
+                            isMatch = matchScore >= 0.6;
+                            break;
+                    }
+
+                    if (isMatch)
+                    {
+                        candidateHeadings.Add(new
+                        {
+                            text = text,
+                            level = level,
+                            position = position,
+                            matchScore = matchScore,
+                            range = range,
+                            fontSize = fontSize,
+                            fontSizeRecognized = true,
+                            bodyFontSize = bodyFontSize
+                        });
+                    }
+                }
+
+                if (candidateHeadings.Count > 0)
+                {
+                    var bestMatch = candidateHeadings
+                        .OrderByDescending(h => h.matchScore)
+                        .ThenBy(h => h.position)
+                        .First();
+
+                    result.found = true;
+                    result.headingInfo = bestMatch;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"通过字体大小查找标题出错: {ex.Message}");
+            }
+
+            return result;
         }
 
         // 文本标准化
@@ -4701,6 +5319,22 @@ namespace WordCopilot.utils
                 int headingLevel = headingInfo.level;
                 int headingEnd = headingRange.End;
 
+                // 检查是否为字体大小识别的标题
+                bool useFontSizeRecognition = false;
+                float headingFontSize = 0;
+                float bodyFontSize = 0;
+                try
+                {
+                    useFontSizeRecognition = headingInfo.fontSizeRecognized == true;
+                    if (useFontSizeRecognition)
+                    {
+                        headingFontSize = (float)headingInfo.fontSize;
+                        bodyFontSize = (float)headingInfo.bodyFontSize;
+                        Debug.WriteLine($"使用字体大小识别模式: 标题字体={headingFontSize}磅, 正文字体={bodyFontSize}磅");
+                    }
+                }
+                catch { useFontSizeRecognition = false; }
+
                 Debug.WriteLine($"标题Range: Start={headingRange.Start}, End={headingEnd}");
 
                 // 从标题后开始读取内容
@@ -4732,41 +5366,83 @@ namespace WordCopilot.utils
                             paraText = paraText.Replace("\r", "").Replace("\n", "").Replace("\x07", "").Trim();
                         }
 
-                        // 检查 OutlineLevel
-                        var outlineLevel = para.OutlineLevel;
-                        bool isHeadingByOutline = false;
+                        bool isHeadingPara = false;
                         int paraLevel = 0;
 
-                        if (outlineLevel != null && outlineLevel >= 1 && outlineLevel <= 9)
+                        if (useFontSizeRecognition)
                         {
-                            paraLevel = (int)outlineLevel;
-                            isHeadingByOutline = true;
-                        }
-
-                        // 备用：检查样式名
-                        bool isHeadingByStyle = false;
-                        int styleLevelValue = 0;
-                        try
-                        {
-                            var style = para.get_Style();
-                            string styleName = style?.NameLocal ?? "";
-                            if (!string.IsNullOrEmpty(styleName) && IsHeadingStyle(styleName))
+                            // 字体大小识别模式：检查字体大小
+                            float paraFontSize = 0;
+                            try
                             {
-                                isHeadingByStyle = true;
-                                styleLevelValue = ExtractHeadingLevel(styleName);
+                                var font = para.Range.Font;
+                                if (font.Size > 0 && font.Size < 1000)
+                                    paraFontSize = font.Size;
+                                else if (para.Range.Characters.Count > 0)
+                                {
+                                    var firstCharFont = para.Range.Characters[1].Font;
+                                    if (firstCharFont.Size > 0 && firstCharFont.Size < 1000)
+                                        paraFontSize = firstCharFont.Size;
+                                }
+                            }
+                            catch { paraFontSize = 0; }
+
+                            paraFontSize = (float)Math.Round(paraFontSize * 2) / 2;
+
+                            // 判断是否为标题（比正文大1.5磅以上）
+                            if (paraFontSize > bodyFontSize + 1.5f && !string.IsNullOrEmpty(paraText) && paraText.Length <= 100)
+                            {
+                                isHeadingPara = true;
+                                // 根据字体大小计算级别（字体越大级别越高）
+                                if (paraFontSize >= headingFontSize)
+                                    paraLevel = headingLevel; // 同级或更高级
+                                else
+                                    paraLevel = headingLevel + 1; // 子标题
+                            }
+
+                            if (!string.IsNullOrEmpty(paraText) && paraText.Length < 100)
+                            {
+                                Debug.WriteLine($"  段落#{checkedParas}: \"{paraText}\"");
+                                Debug.WriteLine($"    字体大小={paraFontSize}磅, 是标题={isHeadingPara}, 级别={paraLevel}");
                             }
                         }
-                        catch { }
-
-                        bool isHeadingPara = isHeadingByOutline || isHeadingByStyle;
-                        if (isHeadingByOutline) paraLevel = (int)outlineLevel;
-                        else if (isHeadingByStyle) paraLevel = styleLevelValue;
-
-                        // 详细日志
-                        if (!string.IsNullOrEmpty(paraText) && paraText.Length < 100)
+                        else
                         {
-                            Debug.WriteLine($"  段落#{checkedParas}: \"{paraText}\"");
-                            Debug.WriteLine($"    OutlineLevel={outlineLevel}, 是标题(Outline)={isHeadingByOutline}, 是标题(Style)={isHeadingByStyle}, 级别={paraLevel}");
+                            // 标准模式：检查 OutlineLevel
+                            var outlineLevel = para.OutlineLevel;
+                            bool isHeadingByOutline = false;
+
+                            if (outlineLevel != null && outlineLevel >= 1 && outlineLevel <= 9)
+                            {
+                                paraLevel = (int)outlineLevel;
+                                isHeadingByOutline = true;
+                            }
+
+                            // 备用：检查样式名
+                            bool isHeadingByStyle = false;
+                            int styleLevelValue = 0;
+                            try
+                            {
+                                var style = para.get_Style();
+                                string styleName = style?.NameLocal ?? "";
+                                if (!string.IsNullOrEmpty(styleName) && IsHeadingStyle(styleName))
+                                {
+                                    isHeadingByStyle = true;
+                                    styleLevelValue = ExtractHeadingLevel(styleName);
+                                }
+                            }
+                            catch { }
+
+                            isHeadingPara = isHeadingByOutline || isHeadingByStyle;
+                            if (isHeadingByOutline) paraLevel = (int)outlineLevel;
+                            else if (isHeadingByStyle) paraLevel = styleLevelValue;
+
+                            // 详细日志
+                            if (!string.IsNullOrEmpty(paraText) && paraText.Length < 100)
+                            {
+                                Debug.WriteLine($"  段落#{checkedParas}: \"{paraText}\"");
+                                Debug.WriteLine($"    OutlineLevel={outlineLevel}, 是标题(Outline)={isHeadingByOutline}, 是标题(Style)={isHeadingByStyle}, 级别={paraLevel}");
+                            }
                         }
 
                         if (isHeadingPara)
@@ -5700,9 +6376,5 @@ namespace WordCopilot.utils
                 return false;
             }
         }
-
-
-
-
     }
 }

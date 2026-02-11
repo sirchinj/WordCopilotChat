@@ -3,7 +3,7 @@ namespace WordCopilotChat
     partial class DefaultParametersForm
     {
         private System.ComponentModel.IContainer components = null;
-        
+
         // 控件声明
         private System.Windows.Forms.GroupBox grpDefault;
         private System.Windows.Forms.Label lblDefaultTemp;
@@ -12,7 +12,9 @@ namespace WordCopilotChat
         private System.Windows.Forms.NumericUpDown nudDefaultMaxTokens;
         private System.Windows.Forms.Label lblDefaultTopP;
         private System.Windows.Forms.NumericUpDown nudDefaultTopP;
-        
+        private System.Windows.Forms.Label lblContextCompressThreshold;
+        private System.Windows.Forms.NumericUpDown nudContextCompressThreshold;
+
         private System.Windows.Forms.GroupBox grpChat;
         private System.Windows.Forms.Label lblChatTemp;
         private System.Windows.Forms.NumericUpDown nudChatTemp;
@@ -20,7 +22,7 @@ namespace WordCopilotChat
         private System.Windows.Forms.NumericUpDown nudChatMaxTokens;
         private System.Windows.Forms.Label lblChatTopP;
         private System.Windows.Forms.NumericUpDown nudChatTopP;
-        
+
         private System.Windows.Forms.GroupBox grpAgent;
         private System.Windows.Forms.Label lblAgentTemp;
         private System.Windows.Forms.NumericUpDown nudAgentTemp;
@@ -28,7 +30,7 @@ namespace WordCopilotChat
         private System.Windows.Forms.NumericUpDown nudAgentMaxTokens;
         private System.Windows.Forms.Label lblAgentTopP;
         private System.Windows.Forms.NumericUpDown nudAgentTopP;
-        
+
         private System.Windows.Forms.Button btnSave;
         private System.Windows.Forms.Button btnCancel;
         private System.Windows.Forms.Button btnReset;
@@ -51,6 +53,8 @@ namespace WordCopilotChat
             this.nudDefaultMaxTokens = new System.Windows.Forms.NumericUpDown();
             this.lblDefaultTopP = new System.Windows.Forms.Label();
             this.nudDefaultTopP = new System.Windows.Forms.NumericUpDown();
+            this.lblContextCompressThreshold = new System.Windows.Forms.Label();
+            this.nudContextCompressThreshold = new System.Windows.Forms.NumericUpDown();
             this.grpChat = new System.Windows.Forms.GroupBox();
             this.lblChatTemp = new System.Windows.Forms.Label();
             this.nudChatTemp = new System.Windows.Forms.NumericUpDown();
@@ -72,6 +76,7 @@ namespace WordCopilotChat
             ((System.ComponentModel.ISupportInitialize)(this.nudDefaultTemp)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudDefaultMaxTokens)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudDefaultTopP)).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)(this.nudContextCompressThreshold)).BeginInit();
             this.grpChat.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.nudChatTemp)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudChatMaxTokens)).BeginInit();
@@ -90,9 +95,11 @@ namespace WordCopilotChat
             this.grpDefault.Controls.Add(this.nudDefaultMaxTokens);
             this.grpDefault.Controls.Add(this.lblDefaultTopP);
             this.grpDefault.Controls.Add(this.nudDefaultTopP);
+            this.grpDefault.Controls.Add(this.lblContextCompressThreshold);
+            this.grpDefault.Controls.Add(this.nudContextCompressThreshold);
             this.grpDefault.Location = new System.Drawing.Point(12, 12);
             this.grpDefault.Name = "grpDefault";
-            this.grpDefault.Size = new System.Drawing.Size(440, 120);
+            this.grpDefault.Size = new System.Drawing.Size(367, 150);
             this.grpDefault.TabIndex = 0;
             this.grpDefault.TabStop = false;
             this.grpDefault.Text = "通用默认参数";
@@ -130,7 +137,7 @@ namespace WordCopilotChat
             this.lblDefaultMaxTokens.Name = "lblDefaultMaxTokens";
             this.lblDefaultMaxTokens.Size = new System.Drawing.Size(150, 20);
             this.lblDefaultMaxTokens.TabIndex = 2;
-            this.lblDefaultMaxTokens.Text = "Max Tokens (最小1):";
+            this.lblDefaultMaxTokens.Text = "Max Tokens (可留空):";
             this.lblDefaultMaxTokens.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             // 
             // nudDefaultMaxTokens
@@ -149,11 +156,7 @@ namespace WordCopilotChat
             this.nudDefaultMaxTokens.Name = "nudDefaultMaxTokens";
             this.nudDefaultMaxTokens.Size = new System.Drawing.Size(120, 21);
             this.nudDefaultMaxTokens.TabIndex = 3;
-            this.nudDefaultMaxTokens.Value = new decimal(new int[] {
-            1,
-            0,
-            0,
-            0});
+            this.nudDefaultMaxTokens.ThousandsSeparator = true;
             // 
             // lblDefaultTopP
             // 
@@ -182,6 +185,37 @@ namespace WordCopilotChat
             this.nudDefaultTopP.Size = new System.Drawing.Size(80, 21);
             this.nudDefaultTopP.TabIndex = 5;
             // 
+            // lblContextCompressThreshold
+            // 
+            this.lblContextCompressThreshold.Location = new System.Drawing.Point(15, 115);
+            this.lblContextCompressThreshold.Name = "lblContextCompressThreshold";
+            this.lblContextCompressThreshold.Size = new System.Drawing.Size(150, 20);
+            this.lblContextCompressThreshold.TabIndex = 6;
+            this.lblContextCompressThreshold.Text = "自动压缩阈值（%）:";
+            this.lblContextCompressThreshold.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
+            // 
+            // nudContextCompressThreshold
+            // 
+            this.nudContextCompressThreshold.Location = new System.Drawing.Point(170, 113);
+            this.nudContextCompressThreshold.Maximum = new decimal(new int[] {
+            95,
+            0,
+            0,
+            0});
+            this.nudContextCompressThreshold.Minimum = new decimal(new int[] {
+            50,
+            0,
+            0,
+            0});
+            this.nudContextCompressThreshold.Name = "nudContextCompressThreshold";
+            this.nudContextCompressThreshold.Size = new System.Drawing.Size(80, 21);
+            this.nudContextCompressThreshold.TabIndex = 7;
+            this.nudContextCompressThreshold.Value = new decimal(new int[] {
+            90,
+            0,
+            0,
+            0});
+            // 
             // grpChat
             // 
             this.grpChat.Controls.Add(this.lblChatTemp);
@@ -190,9 +224,9 @@ namespace WordCopilotChat
             this.grpChat.Controls.Add(this.nudChatMaxTokens);
             this.grpChat.Controls.Add(this.lblChatTopP);
             this.grpChat.Controls.Add(this.nudChatTopP);
-            this.grpChat.Location = new System.Drawing.Point(12, 142);
+            this.grpChat.Location = new System.Drawing.Point(12, 172);
             this.grpChat.Name = "grpChat";
-            this.grpChat.Size = new System.Drawing.Size(440, 120);
+            this.grpChat.Size = new System.Drawing.Size(367, 120);
             this.grpChat.TabIndex = 1;
             this.grpChat.TabStop = false;
             this.grpChat.Text = "Chat模式参数";
@@ -230,7 +264,7 @@ namespace WordCopilotChat
             this.lblChatMaxTokens.Name = "lblChatMaxTokens";
             this.lblChatMaxTokens.Size = new System.Drawing.Size(150, 20);
             this.lblChatMaxTokens.TabIndex = 2;
-            this.lblChatMaxTokens.Text = "Max Tokens (最小1):";
+            this.lblChatMaxTokens.Text = "Max Tokens (可留空):";
             this.lblChatMaxTokens.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             // 
             // nudChatMaxTokens
@@ -249,11 +283,7 @@ namespace WordCopilotChat
             this.nudChatMaxTokens.Name = "nudChatMaxTokens";
             this.nudChatMaxTokens.Size = new System.Drawing.Size(120, 21);
             this.nudChatMaxTokens.TabIndex = 3;
-            this.nudChatMaxTokens.Value = new decimal(new int[] {
-            1,
-            0,
-            0,
-            0});
+            this.nudChatMaxTokens.ThousandsSeparator = true;
             // 
             // lblChatTopP
             // 
@@ -290,9 +320,9 @@ namespace WordCopilotChat
             this.grpAgent.Controls.Add(this.nudAgentMaxTokens);
             this.grpAgent.Controls.Add(this.lblAgentTopP);
             this.grpAgent.Controls.Add(this.nudAgentTopP);
-            this.grpAgent.Location = new System.Drawing.Point(12, 272);
+            this.grpAgent.Location = new System.Drawing.Point(12, 302);
             this.grpAgent.Name = "grpAgent";
-            this.grpAgent.Size = new System.Drawing.Size(440, 120);
+            this.grpAgent.Size = new System.Drawing.Size(367, 120);
             this.grpAgent.TabIndex = 2;
             this.grpAgent.TabStop = false;
             this.grpAgent.Text = "Agent模式参数";
@@ -330,7 +360,7 @@ namespace WordCopilotChat
             this.lblAgentMaxTokens.Name = "lblAgentMaxTokens";
             this.lblAgentMaxTokens.Size = new System.Drawing.Size(150, 20);
             this.lblAgentMaxTokens.TabIndex = 2;
-            this.lblAgentMaxTokens.Text = "Max Tokens (最小1):";
+            this.lblAgentMaxTokens.Text = "Max Tokens (可留空):";
             this.lblAgentMaxTokens.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             // 
             // nudAgentMaxTokens
@@ -349,11 +379,7 @@ namespace WordCopilotChat
             this.nudAgentMaxTokens.Name = "nudAgentMaxTokens";
             this.nudAgentMaxTokens.Size = new System.Drawing.Size(120, 21);
             this.nudAgentMaxTokens.TabIndex = 3;
-            this.nudAgentMaxTokens.Value = new decimal(new int[] {
-            1,
-            0,
-            0,
-            0});
+            this.nudAgentMaxTokens.ThousandsSeparator = true;
             // 
             // lblAgentTopP
             // 
@@ -385,7 +411,7 @@ namespace WordCopilotChat
             // btnSave
             // 
             this.btnSave.DialogResult = System.Windows.Forms.DialogResult.OK;
-            this.btnSave.Location = new System.Drawing.Point(217, 410);
+            this.btnSave.Location = new System.Drawing.Point(210, 440);
             this.btnSave.Name = "btnSave";
             this.btnSave.Size = new System.Drawing.Size(75, 25);
             this.btnSave.TabIndex = 3;
@@ -396,7 +422,7 @@ namespace WordCopilotChat
             // btnCancel
             // 
             this.btnCancel.DialogResult = System.Windows.Forms.DialogResult.Cancel;
-            this.btnCancel.Location = new System.Drawing.Point(298, 410);
+            this.btnCancel.Location = new System.Drawing.Point(302, 440);
             this.btnCancel.Name = "btnCancel";
             this.btnCancel.Size = new System.Drawing.Size(75, 25);
             this.btnCancel.TabIndex = 4;
@@ -405,7 +431,7 @@ namespace WordCopilotChat
             // 
             // btnReset
             // 
-            this.btnReset.Location = new System.Drawing.Point(12, 410);
+            this.btnReset.Location = new System.Drawing.Point(12, 440);
             this.btnReset.Name = "btnReset";
             this.btnReset.Size = new System.Drawing.Size(80, 25);
             this.btnReset.TabIndex = 5;
@@ -415,7 +441,7 @@ namespace WordCopilotChat
             // 
             // DefaultParametersForm
             // 
-            this.ClientSize = new System.Drawing.Size(480, 520);
+            this.ClientSize = new System.Drawing.Size(389, 486);
             this.Controls.Add(this.btnReset);
             this.Controls.Add(this.btnCancel);
             this.Controls.Add(this.btnSave);
@@ -432,6 +458,7 @@ namespace WordCopilotChat
             ((System.ComponentModel.ISupportInitialize)(this.nudDefaultTemp)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudDefaultMaxTokens)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudDefaultTopP)).EndInit();
+            ((System.ComponentModel.ISupportInitialize)(this.nudContextCompressThreshold)).EndInit();
             this.grpChat.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize)(this.nudChatTemp)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudChatMaxTokens)).EndInit();

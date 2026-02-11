@@ -389,6 +389,10 @@
     <Content Include="docs\demos\7.Agent插入.gif" />
     <Content Include="docs\demos\8.Agent查询.gif" />
     <Content Include="docs\wechat.png" />
+    <None Include="Resources\uil--wrench-Blue.png" />
+    <None Include="Resources\uil--book-reader-Blue.png" />
+    <None Include="Resources\uil--robot-Blue.png" />
+    <None Include="Resources\uil--setting-Blue.png" />
     <Content Include="wwwroot\css\atom-one-dark.min.css">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>

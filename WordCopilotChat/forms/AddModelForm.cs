@@ -78,12 +78,16 @@ namespace WordCopilotChat
             chkMultiModal.Checked = _currentModel.EnableMulti == 1;
             chkTools.Checked = _currentModel.EnableTools == 1;
             chkThink.Checked = _currentModel.EnableThink == 1;
+            
+            // 加载上下文长度（默认128k）
+            numContextLength.Value = _currentModel.ContextLength ?? 128;
         }
 
         private void SetDefaultValues()
         {
             txtParameters.Text = "{\n  \"model\": \"gpt-3.5-turbo\"\n}";
             rbChat.Checked = true;
+            numContextLength.Value = 128; // 默认128k tokens
         }
 
         private void BtnSave_Click(object sender, EventArgs e)
@@ -150,6 +154,10 @@ namespace WordCopilotChat
 
         private Model CreateModelFromInput()
         {
+            // 获取上下文长度，如果为0则设置为null（表示不限制）
+            int contextLengthValue = (int)numContextLength.Value;
+            int? contextLength = contextLengthValue > 0 ? (int?)contextLengthValue : null;
+            
             return new Model
             {
                 NickName = txtNickName.Text.Trim(),
@@ -160,7 +168,8 @@ namespace WordCopilotChat
                 modelType = rbChat.Checked ? 1 : 2,
                 EnableMulti = chkMultiModal.Checked ? 1 : 0,
                 EnableTools = chkTools.Checked ? 1 : 0,
-                EnableThink = chkThink.Checked ? 1 : 0
+                EnableThink = chkThink.Checked ? 1 : 0,
+                ContextLength = contextLength
             };
         }
 
